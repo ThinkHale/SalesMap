@@ -16,6 +16,7 @@ const STATIC_ASSETS = [
   './js/plugin-api.js',
   './plugins/heatmap-overlay.js',
   './plugins/example-plugin.js',
+  './plugins/layer-styler.js',
   './js/firebase-config.js',
   './js/geocoding-service.js',
   './js/csv-parser.js',

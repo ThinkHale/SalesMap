@@ -21,7 +21,10 @@ class MapManager {
     this._mapClickListener = null;
     this._mapDblClickListener = null;
     this._drawingHintEl = null;
+    this._overlayClickCallback = null;
   }
+
+  setOverlayClickCallback(fn) { this._overlayClickCallback = fn; }
 
   async initialize() {
     const mapOptions = {
@@ -112,8 +115,11 @@ class MapManager {
     marker._featureData = feature;
 
     marker.addListener('click', () => {
-      if (this.ignoreFeatureClicks) return;
-      this._selectFeature(feature, marker, layerData.color);
+      if (this.ignoreFeatureClicks) {
+        if (this._overlayClickCallback) this._overlayClickCallback(marker.getPosition());
+        return;
+      }
+      this._selectFeature(feature, marker, layerData.color, layerId);
       if (this.onFeatureClick) this.onFeatureClick({ properties: feature, marker, layerId });
     });
 
@@ -163,8 +169,11 @@ class MapManager {
     polygon._featureData = feature;
 
     polygon.addListener('click', (e) => {
-      if (this.ignoreFeatureClicks) return;
-      this._selectFeature(feature, polygon, fillColor);
+      if (this.ignoreFeatureClicks) {
+        if (this._overlayClickCallback) this._overlayClickCallback(e.latLng);
+        return;
+      }
+      this._selectFeature(feature, polygon, fillColor, layerId);
       if (this.onFeatureClick) this.onFeatureClick({ properties: feature, polygon, layerId });
     });
 
@@ -187,12 +196,12 @@ class MapManager {
     return null;
   }
 
-  _selectFeature(feature, mapObject, color) {
-    this.selectedFeature = { feature, mapObject };
-    this._openInfoWindow(feature, mapObject, color);
+  _selectFeature(feature, mapObject, color, layerId) {
+    this.selectedFeature = { feature, mapObject, layerId };
+    this._openInfoWindow(feature, mapObject, layerId);
   }
 
-  _openInfoWindow(feature, mapObject, color) {
+  _openInfoWindow(feature, mapObject, layerId) {
     const container = document.createElement('div');
     container.className = 'info-window-content';
 
@@ -201,7 +210,6 @@ class MapManager {
     container.appendChild(title);
 
     const displayProps = AppConfig.featureInfo.displayProperties;
-    const systemProps = new Set(AppConfig.featureInfo.systemProperties);
 
     displayProps.forEach(prop => {
       if (feature[prop] !== undefined && feature[prop] !== null && feature[prop] !== '') {
@@ -218,7 +226,7 @@ class MapManager {
     const editBtn = Utils.createElement('button', { className: 'btn btn-sm btn-primary iw-edit-btn' }, 'View Details');
     editBtn.addEventListener('click', () => {
       this.infoWindow.close();
-      if (this.onFeatureClick) this.onFeatureClick({ properties: feature, mapObject });
+      if (this.onFeatureClick) this.onFeatureClick({ properties: feature, mapObject, layerId });
     });
     container.appendChild(editBtn);
 
@@ -393,14 +401,28 @@ class MapManager {
     this.stopDrawing();
     this.drawingMode = mode;
     this.polygonPath = [];
-    this.map.setOptions({ draggableCursor: 'crosshair' });
+    this.map.setOptions({ draggableCursor: 'crosshair', disableDoubleClickZoom: true });
 
     if (mode === 'polygon') {
       this._mapClickListener = this.map.addListener('click', (e) => {
+        // Close polygon if user clicks near the first vertex (within ~20px)
+        if (this.polygonPath.length >= 3) {
+          const first = this.polygonPath[0];
+          const clickPx = this.map.getProjection()?.fromLatLngToPoint(e.latLng);
+          const firstPx = this.map.getProjection()?.fromLatLngToPoint(first);
+          if (clickPx && firstPx) {
+            const scale = Math.pow(2, this.map.getZoom());
+            const dx = (clickPx.x - firstPx.x) * scale;
+            const dy = (clickPx.y - firstPx.y) * scale;
+            if (Math.sqrt(dx * dx + dy * dy) < 12) {
+              this._closePolygon();
+              return;
+            }
+          }
+        }
         this._addPolygonVertex(e.latLng);
       });
-      this._mapDblClickListener = this.map.addListener('dblclick', (e) => {
-        e.stop();
+      this._mapDblClickListener = this.map.addListener('dblclick', () => {
         this._closePolygon();
       });
     } else if (mode === 'point') {

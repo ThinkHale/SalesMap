@@ -105,7 +105,7 @@ const DrawingController = {
     }
     if (this._hintEl) {
       if (type === 'polygon') {
-        this._hintEl.textContent = 'Click to add vertices. Double-click to close polygon. Esc to cancel.';
+        this._hintEl.textContent = 'Click to add vertices. Click first vertex or double-click to close. Esc to cancel.';
       } else {
         this._hintEl.textContent = 'Click on the map to place a point. Esc to cancel.';
       }

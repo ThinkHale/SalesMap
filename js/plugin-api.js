@@ -236,6 +236,23 @@ class PluginManager {
         api.layers.addFeatures = (layerId, features) => lm().addFeaturesToLayer(layerId, features);
         api.layers.updateFeature = (layerId, fId, props) => lm().updateFeature(layerId, fId, props);
         api.layers.deleteFeature = (layerId, fId) => lm().deleteFeature(layerId, fId);
+        api.layers.setColor = (layerId, color) => lm().setLayerColor(layerId, color);
+        api.layers.setOpacity = (layerId, opacity) => lm().setLayerOpacity(layerId, opacity);
+        api.layers.applyPropertyStyle = (layerId, property) => {
+          const mm = AppRegistry.require('mapManager');
+          mm.applyPropertyBasedStyle(layerId, property);
+          const layer = lm().getLayer(layerId);
+          if (layer) { layer.styleType = 'property'; layer.styleProperty = property; }
+          eventBus.emit('layer.style.changed', { layerId, styleType: 'property', property });
+        };
+        api.layers.resetStyle = (layerId) => {
+          const layer = lm().getLayer(layerId);
+          if (!layer) return;
+          layer.styleType = null;
+          layer.styleProperty = null;
+          lm().setLayerColor(layerId, layer.color);
+          eventBus.emit('layer.style.changed', { layerId, styleType: 'solid' });
+        };
       }
     }
 
@@ -248,6 +265,7 @@ class PluginManager {
         api.map.getCenter = () => mm().map.getCenter();
         api.map.getZoom = () => mm().map.getZoom();
         api.map.getBounds = () => mm().map.getBounds();
+        api.map.getLayerData = layerId => mm().getLayerData(layerId);
       }
       if (perms.has('map.write')) {
         api.map.setCenter = (lat, lng, zoom) => mm().setCenter(lat, lng, zoom);

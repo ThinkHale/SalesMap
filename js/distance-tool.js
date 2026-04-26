@@ -25,6 +25,7 @@ class DistanceTool {
     this._mm.map.setOptions({ draggableCursor: 'crosshair' });
     this._showInstructions();
 
+    this._mm.setOverlayClickCallback(latLng => this._handleClick(latLng));
     this._clickListener = this._mm.map.addListener('click', e => {
       this._handleClick(e.latLng);
     });
@@ -35,6 +36,7 @@ class DistanceTool {
   deactivate() {
     this._isActive = false;
     this._mm.ignoreFeatureClicks = false;
+    this._mm.setOverlayClickCallback(null);
     this._mm.map.setOptions({ draggableCursor: null });
     this._hideInstructions();
     this.clearCurrent();

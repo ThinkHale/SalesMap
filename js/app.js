@@ -30,6 +30,10 @@ async function initMap() {
     const clusterManager = new ClusterManager(mapManager.map);
     AppRegistry.register('clusterManager', clusterManager);
 
+    // Append clustering toggle to layers toolbar
+    const clusterPanel = clusterManager.renderSettingsPanel();
+    document.querySelector('.sidebar-toolbar')?.appendChild(clusterPanel);
+
     const distanceTool = new DistanceTool(mapManager);
     AppRegistry.register('distanceTool', distanceTool);
 

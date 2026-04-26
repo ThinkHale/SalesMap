@@ -9,8 +9,8 @@ const AppConfig = Object.freeze({
     authDomain: 'salesmap-4771d.firebaseapp.com',
     projectId: 'salesmap-4771d',
     storageBucket: 'salesmap-4771d.firebasestorage.app',
-    messagingSenderId: '604440170823D',
-    appId: 'YOUR_APP_I1:604440170823:web:0e1d3f6b515f9058597c62D',
+    messagingSenderId: '604440170823',
+    appId: '1:604440170823:web:0e1d3f6b515f9058597c62',
     databaseURL: 'https://salesmap-4771d-default-rtdb.firebaseio.com/'
   }),
 
