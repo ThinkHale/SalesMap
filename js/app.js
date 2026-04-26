@@ -260,6 +260,20 @@ function setupDOMEventListeners() {
   document.getElementById('resetViewBtn')?.addEventListener('click', () => AppRegistry.get('mapManager')?.resetView());
   document.getElementById('fitAllBtn')?.addEventListener('click', () => AppRegistry.get('layerManager')?.fitToAll());
 
+  // ── New Layer ──
+  document.getElementById('newLayerBtn')?.addEventListener('click', () => {
+    const name = prompt('Layer name:', 'New Layer');
+    if (!name || !name.trim()) return;
+    const lm = AppRegistry.require('layerManager');
+    const ch = AppRegistry.require('commandHistory');
+    const cmd = new CreateLayerCommand(lm, name.trim(), [], 'point', {});
+    ch.execute(cmd);
+    // Auto-set as draw target so the user can immediately start drawing
+    stateManager.set('targetLayerForNewFeature', cmd.layerId);
+    SyncController.scheduleSave();
+    toastManager.success(`Layer "${name.trim()}" created. Draw target set — use Point or Polygon to add features.`);
+  });
+
   // ── Search ──
   const searchInput = document.getElementById('mapSearchInput');
   const searchBtn = document.getElementById('mapSearchBtn');
