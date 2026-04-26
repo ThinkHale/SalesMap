@@ -88,7 +88,7 @@ const SyncController = {
     }
   },
 
-  isSaving() { return this._isSaving; }
+  isSaving() { return this._isSaving; },
   isImporting() { return this._isImporting; }
 };
 
