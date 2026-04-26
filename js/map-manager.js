@@ -442,6 +442,14 @@ class MapManager {
   }
 
   _closePolygon() {
+    // Google Maps always fires `click` immediately before `dblclick` on the same
+    // position, so the double-click added one unwanted extra vertex. Remove it.
+    if (this.polygonPath.length > 0) {
+      this.polygonPath.pop();
+      const lastMarker = this.tempMarkers.pop();
+      if (lastMarker) lastMarker.setMap(null);
+    }
+
     if (this.polygonPath.length < 3) {
       toastManager.warning('A polygon requires at least 3 points');
       return;
