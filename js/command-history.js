@@ -43,10 +43,31 @@ class DeleteLayerCommand {
       this._snapshot.name,
       this._snapshot.features,
       this._snapshot.type,
-      this._snapshot.metadata
+      this._snapshot.metadata,
+      this._snapshot.id,
+      {
+        color: this._snapshot.color,
+        visible: this._snapshot.visible,
+        opacity: this._snapshot.opacity,
+        styleType: this._snapshot.styleType,
+        styleProperty: this._snapshot.styleProperty,
+        showLabels: this._snapshot.showLabels,
+        groupId: this._groupId,
+        createdAt: this._snapshot.createdAt
+      }
     );
-    if (this._groupId) {
-      this.layerManager.addLayerToGroup(layer.id, this._groupId);
+
+    if (this._snapshot.visible === false) {
+      this.layerManager.setLayerVisibility(layer.id, false);
+    }
+    if (this._snapshot.opacity !== undefined && this._snapshot.opacity !== null) {
+      this.layerManager.setLayerOpacity(layer.id, this._snapshot.opacity);
+    }
+    if (this._snapshot.styleType === 'property' && this._snapshot.styleProperty) {
+      this.layerManager._mapManager.applyPropertyBasedStyle(layer.id, this._snapshot.styleProperty);
+    }
+    if (this._snapshot.showLabels) {
+      this.layerManager._mapManager.toggleLayerLabels(layer.id, true, layer.features);
     }
   }
 }

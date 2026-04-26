@@ -4,6 +4,7 @@ const SyncController = {
   _saveTimeout: null,
   _isSaving: false,
   _isImporting: false,
+  _listenerActive: false,
 
   scheduleSave() {
     if (this._saveTimeout) clearTimeout(this._saveTimeout);
@@ -25,6 +26,7 @@ const SyncController = {
     const wasListening = sm.get('realtimeEnabled');
     if (wasListening) {
       firebaseManager.stopListening();
+      this._listenerActive = false;
       sm.set('realtimeEnabled', false, true);
     }
 
@@ -50,6 +52,7 @@ const SyncController = {
   },
 
   enableRealtimeSync() {
+    if (this._listenerActive) return;
     const firebaseManager = AppRegistry.require('firebaseManager');
     const sm = AppRegistry.require('stateManager');
 
@@ -60,6 +63,7 @@ const SyncController = {
       if (this._isSaving || this._isImporting) return;
       this._applyRemoteUpdate(data);
     });
+    this._listenerActive = true;
 
     sm.set('realtimeEnabled', true, true);
   },
@@ -68,6 +72,7 @@ const SyncController = {
     const firebaseManager = AppRegistry.require('firebaseManager');
     const sm = AppRegistry.require('stateManager');
     firebaseManager.stopListening();
+    this._listenerActive = false;
     sm.set('realtimeEnabled', false, true);
   },
 

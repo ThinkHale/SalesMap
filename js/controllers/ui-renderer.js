@@ -14,6 +14,13 @@ const UIRenderer = {
     const groups = layerManager.getAllLayerGroups();
 
     container.innerHTML = '';
+    container.ondragover = (e) => { e.preventDefault(); };
+    container.ondrop = (e) => {
+      e.preventDefault();
+      const draggedLayerId = e.dataTransfer?.getData('text/plain');
+      if (!draggedLayerId) return;
+      layerManager.moveLayer(draggedLayerId, null);
+    };
 
     if (layers.length === 0) {
       const empty = Utils.createElement('div', { className: 'layer-list-empty' });
@@ -175,9 +182,37 @@ const UIRenderer = {
 
     // Drag to reorder (simple implementation)
     el.draggable = true;
-    el.addEventListener('dragstart', () => { el.dataset.dragging = 'true'; });
+    el.addEventListener('dragstart', (e) => {
+      if (e.dataTransfer) {
+        e.dataTransfer.setData('text/plain', layer.id);
+        e.dataTransfer.effectAllowed = 'move';
+      }
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => {
+      el.classList.remove('drag-over');
+    });
+    el.addEventListener('drop', (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const draggedLayerId = e.dataTransfer?.getData('text/plain');
+      if (!draggedLayerId || draggedLayerId === layer.id) return;
+      this._moveLayerBefore(draggedLayerId, layer.id);
+    });
 
     return el;
+  },
+
+  _moveLayerBefore(draggedLayerId, targetLayerId) {
+    const layerManager = AppRegistry.require('layerManager');
+    layerManager.moveLayer(draggedLayerId, targetLayerId);
   },
 
   _showLayerContextMenu(e, layer, layerManager, sm) {

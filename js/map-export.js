@@ -22,7 +22,8 @@ const MapExport = {
       features: (l.features || []).map(f => ({ ...f }))
     })));
 
-    const html = this._buildExportHTML(layerData, mapCenter, mapZoom);
+    const safeLayerData = encodeURIComponent(layerData);
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -74,7 +75,7 @@ const MapExport = {
 </div>
 <div id="map"></div>
 <script>
-const LAYER_DATA = ${layerDataJSON};
+const LAYER_DATA = JSON.parse(decodeURIComponent("${layerDataJSON}"));
 const TIER_COLORS = ${JSON.stringify(AppConfig.colors.tierMap)};
 const PIN_PATH = ${JSON.stringify(AppConfig.marker.pinPath)};
 

@@ -146,50 +146,63 @@ class MapManager {
 
     if (!geoJson) return;
 
-    const paths = this._geojsonToPaths(geoJson);
-    if (!paths) return;
+    const pathData = this._geojsonToPaths(geoJson);
+    if (!pathData) return;
 
     const tierColor = AppConfig.colors.tierMap[String(feature.tier || '').toLowerCase()];
     const fillColor = tierColor || color;
 
-    const polygon = new google.maps.Polygon({
-      paths,
-      fillColor,
-      fillOpacity: AppConfig.polygon.fillOpacity,
-      strokeColor: fillColor,
-      strokeWeight: AppConfig.polygon.strokeWeight,
-      strokeOpacity: 0.8,
-      clickable: true,
-      map: layerData.visible ? this.map : null
+    const polygonsToRender = pathData.type === 'MultiPolygon'
+      ? pathData.polygons
+      : [pathData.paths];
+
+    polygonsToRender.forEach(paths => {
+      const polygon = new google.maps.Polygon({
+        paths,
+        fillColor,
+        fillOpacity: AppConfig.polygon.fillOpacity,
+        strokeColor: fillColor,
+        strokeWeight: AppConfig.polygon.strokeWeight,
+        strokeOpacity: 0.8,
+        clickable: true,
+        map: layerData.visible ? this.map : null
+      });
+
+      polygon._featureId = feature.id;
+      polygon._layerId = layerId;
+      polygon._featureData = feature;
+
+      polygon.addListener('click', (e) => {
+        if (this.ignoreFeatureClicks) {
+          if (this._overlayClickCallback) this._overlayClickCallback(e.latLng);
+          return;
+        }
+        this._selectFeature(feature, polygon, fillColor, layerId);
+      });
+
+      layerData.polygons.push(polygon);
     });
-
-    polygon._featureId = feature.id;
-    polygon._layerId = layerId;
-    polygon._featureData = feature;
-
-    polygon.addListener('click', (e) => {
-      if (this.ignoreFeatureClicks) {
-        if (this._overlayClickCallback) this._overlayClickCallback(e.latLng);
-        return;
-      }
-      this._selectFeature(feature, polygon, fillColor, layerId);
-    });
-
-    layerData.polygons.push(polygon);
   }
 
   _geojsonToPaths(geoJson) {
     if (!geoJson) return null;
     if (geoJson.type === 'Polygon') {
-      return geoJson.coordinates.map(ring =>
-        ring.map(coord => ({ lat: coord[1], lng: coord[0] }))
-      );
+      return {
+        type: 'Polygon',
+        paths: geoJson.coordinates.map(ring =>
+          ring.map(coord => ({ lat: coord[1], lng: coord[0] }))
+        )
+      };
     }
     if (geoJson.type === 'MultiPolygon') {
-      // Return array of rings from first polygon
-      return geoJson.coordinates[0].map(ring =>
-        ring.map(coord => ({ lat: coord[1], lng: coord[0] }))
-      );
+      return {
+        type: 'MultiPolygon',
+        polygons: geoJson.coordinates.map(polygon =>
+          polygon.map(ring =>
+            ring.map(coord => ({ lat: coord[1], lng: coord[0] }))
+          )
+        )
+      };
     }
     return null;
   }
@@ -357,13 +370,32 @@ class MapManager {
     layerData.labels.forEach(l => l.setMap(null));
     layerData.labels = [];
 
+    layerData.markers.forEach((marker, idx) => {
+      if (!show) {
+        marker.setLabel(null);
+        return;
+      }
+      const feature = features?.[idx];
+      if (!feature || !feature.name) return;
+      marker.setLabel({
+        text: feature.name.substring(0, 20),
+        color: '#333',
+        fontSize: '11px',
+        fontWeight: 'bold'
+      });
+    });
+
     if (!show || !features) return;
 
     layerData.polygons.forEach((polygon, idx) => {
       const feature = features[idx];
       if (!feature || !feature.name) return;
       const bounds = new google.maps.LatLngBounds();
-      polygon.getPath().forEach(p => bounds.extend(p));
+      if (typeof polygon.getPaths === 'function') {
+        polygon.getPaths().forEach(path => path.forEach(p => bounds.extend(p)));
+      } else {
+        polygon.getPath().forEach(p => bounds.extend(p));
+      }
       const center = bounds.getCenter();
 
       const label = new google.maps.Marker({

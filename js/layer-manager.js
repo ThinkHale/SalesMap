@@ -11,46 +11,55 @@ class LayerManager {
 
   // ─── Layer CRUD ────────────────────────────────────────────────────────────
 
-  createLayer(name, features = [], type = 'point', metadata = {}) {
-    const id = Utils.generateId('layer');
-    const color = this._mapManager.getNextColor();
+  createLayer(name, features = [], type = 'point', metadata = {}, id = null, options = {}) {
+    const layerId = id || Utils.generateId('layer');
+    const color = options.color || this._mapManager.getNextColor();
 
     const layer = {
-      id,
+      id: layerId,
       name,
       type,
       features: [...features],
-      visible: true,
-      opacity: AppConfig.layer.defaultOpacity,
+      visible: options.visible !== undefined ? options.visible : true,
+      opacity: options.opacity !== undefined ? options.opacity : AppConfig.layer.defaultOpacity,
       color,
       groupId: null,
-      styleType: null,
-      styleProperty: null,
-      showLabels: false,
+      styleType: options.styleType || null,
+      styleProperty: options.styleProperty || null,
+      showLabels: options.showLabels || false,
       metadata: { ...metadata },
-      createdAt: Utils.formatDate()
+      createdAt: options.createdAt || Utils.formatDate()
     };
 
-    this.layers.set(id, layer);
+    this.layers.set(layerId, layer);
     const order = stateManager.get('layerOrder');
-    order.push(id);
+    order.push(layerId);
     stateManager.set('layerOrder', order, true);
 
     // Add to "All Layers" group if it exists
     const allGroupId = stateManager.get('allLayersGroupId');
     if (allGroupId) {
-      this.addLayerToGroup(id, allGroupId);
+      this.addLayerToGroup(layerId, allGroupId);
+    }
+    if (options.groupId && options.groupId !== allGroupId) {
+      this.addLayerToGroup(layerId, options.groupId);
     }
 
     // Render on map
     if (features.length > 0) {
-      const assignedColor = this._mapManager.addFeaturesToLayer(id, features, type, color);
+      const assignedColor = this._mapManager.addFeaturesToLayer(layerId, features, type, color);
       layer.color = assignedColor;
+      if (!layer.visible) {
+        this._mapManager.toggleLayerVisibility(layerId, false);
+      }
     } else {
-      this._mapManager.createDataSource(id, type === 'point');
+      this._mapManager.createDataSource(layerId, type === 'point');
+      if (!layer.visible) {
+        this._mapManager.toggleLayerVisibility(layerId, false);
+      }
     }
 
-    eventBus.emit('layer.created', { layerId: id, layer });
+    eventBus.emit('layer.created', { layerId, layer });
     return layer;
   }
 
@@ -58,7 +67,6 @@ class LayerManager {
     const layer = this.layers.get(layerId);
     if (!layer) throw new Error(`Layer not found: ${layerId}`);
 
-    const before = layer.features.length;
     layer.features.push(...newFeatures);
 
     // Detect mixed types
@@ -70,6 +78,9 @@ class LayerManager {
 
     const type = featureType || layer.type;
     this._mapManager.addFeaturesToLayer(layerId, newFeatures, type, layer.color);
+    if (layer.styleType === 'property' && layer.styleProperty) {
+      this._mapManager.applyPropertyBasedStyle(layerId, layer.styleProperty);
+    }
 
     eventBus.emit('features.added', {
       layerId,
@@ -331,7 +342,32 @@ class LayerManager {
       stateManager.set('allLayersGroupId', allGroupId, true);
     }
 
+    // Restore layer styling state after import
+    newLayers.forEach((layer, id) => {
+      if (layer.styleType === 'property' && layer.styleProperty) {
+        this._mapManager.applyPropertyBasedStyle(id, layer.styleProperty);
+      }
+      if (layer.showLabels) {
+        this._mapManager.toggleLayerLabels(id, true, layer.features);
+      }
+    });
+
     eventBus.emit('layers.imported', { layerCount: newLayers.size });
+  }
+
+  moveLayer(layerId, beforeLayerId) {
+    const order = [...stateManager.get('layerOrder')];
+    const currentIndex = order.indexOf(layerId);
+    if (currentIndex === -1) return;
+    order.splice(currentIndex, 1);
+    const beforeIndex = order.indexOf(beforeLayerId);
+    if (beforeIndex === -1) {
+      order.push(layerId);
+    } else {
+      order.splice(beforeIndex, 0, layerId);
+    }
+    stateManager.set('layerOrder', order, true);
+    eventBus.emit('layers.updated', { source: 'reorder' });
   }
 
   fitToLayer(layerId) {

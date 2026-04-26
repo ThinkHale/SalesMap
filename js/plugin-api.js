@@ -19,7 +19,6 @@ class PluginRegistry {
   register(def) {
     this._validateManifest(def);
     this.registry.set(def.id, def);
-    console.log(`[PluginRegistry] Registered plugin: ${def.id} v${def.version}`);
   }
 
   async loadFromURL(url) {

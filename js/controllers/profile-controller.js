@@ -60,6 +60,7 @@ const ProfileController = {
 
       // Clear existing layers
       layerManager.getAllLayers().forEach(l => layerManager.deleteLayer(l.id));
+      AppRegistry.require('commandHistory').clear();
       layerManager.layerGroups.clear();
       sm.set('layerOrder', [], true);
       sm.set('allLayersGroupId', null, true);

@@ -177,20 +177,17 @@ function setupDOMEventListeners() {
   const pasteImportBtn = document.getElementById('pasteImportBtn');
   if (pasteImportBtn) {
     pasteImportBtn.addEventListener('click', () => {
-      const textarea = document.getElementById('pasteImportArea');
-      if (textarea) {
-        drawerManager.open(body => {
-          const wrapper = Utils.createElement('div', { className: 'paste-import-wrapper' });
-          const lbl = Utils.createElement('label', { className: 'form-label' }, 'Paste CSV data:');
-          const ta = Utils.createElement('textarea', { className: 'form-control paste-textarea', rows: '12', placeholder: 'Paste CSV content here...' });
-          const importBtn = Utils.createElement('button', { className: 'btn btn-primary', style: { marginTop: '12px' } }, 'Import Pasted Data');
-          importBtn.addEventListener('click', () => ImportController.handlePastedText(ta.value));
-          wrapper.appendChild(lbl);
-          wrapper.appendChild(ta);
-          wrapper.appendChild(importBtn);
-          body.appendChild(wrapper);
-        }, 'Import from Clipboard');
-      }
+      drawerManager.open(body => {
+        const wrapper = Utils.createElement('div', { className: 'paste-import-wrapper' });
+        const lbl = Utils.createElement('label', { className: 'form-label' }, 'Paste CSV data:');
+        const ta = Utils.createElement('textarea', { className: 'form-control paste-textarea', rows: '12', placeholder: 'Paste CSV content here...' });
+        const importBtn = Utils.createElement('button', { className: 'btn btn-primary', style: { marginTop: '12px' } }, 'Import Pasted Data');
+        importBtn.addEventListener('click', () => ImportController.handlePastedText(ta.value));
+        wrapper.appendChild(lbl);
+        wrapper.appendChild(ta);
+        wrapper.appendChild(importBtn);
+        body.appendChild(wrapper);
+      }, 'Import from Clipboard');
     });
   }
 
