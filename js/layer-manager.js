@@ -348,7 +348,7 @@ class LayerManager {
         this._mapManager.applyPropertyBasedStyle(id, layer.styleProperty);
       }
       if (layer.showLabels) {
-        this._mapManager.toggleLayerLabels(id, true, layer.features);
+        this._mapManager.togglePolygonLabels(id, true, layer.features);
       }
     });
 

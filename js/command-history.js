@@ -67,7 +67,7 @@ class DeleteLayerCommand {
       this.layerManager._mapManager.applyPropertyBasedStyle(layer.id, this._snapshot.styleProperty);
     }
     if (this._snapshot.showLabels) {
-      this.layerManager._mapManager.toggleLayerLabels(layer.id, true, layer.features);
+      this.layerManager._mapManager.togglePolygonLabels(layer.id, true, layer.features);
     }
   }
 }
