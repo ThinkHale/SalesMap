@@ -120,7 +120,6 @@ class MapManager {
         return;
       }
       this._selectFeature(feature, marker, layerData.color, layerId);
-      if (this.onFeatureClick) this.onFeatureClick({ properties: feature, marker, layerId });
     });
 
     layerData.markers.push(marker);
@@ -174,7 +173,6 @@ class MapManager {
         return;
       }
       this._selectFeature(feature, polygon, fillColor, layerId);
-      if (this.onFeatureClick) this.onFeatureClick({ properties: feature, polygon, layerId });
     });
 
     layerData.polygons.push(polygon);
@@ -405,7 +403,7 @@ class MapManager {
 
     if (mode === 'polygon') {
       this._mapClickListener = this.map.addListener('click', (e) => {
-        // Close polygon if user clicks near the first vertex (within ~20px)
+        // Close polygon if user clicks near the first vertex
         if (this.polygonPath.length >= 3) {
           const first = this.polygonPath[0];
           const clickPx = this.map.getProjection()?.fromLatLngToPoint(e.latLng);
@@ -415,7 +413,8 @@ class MapManager {
             const dx = (clickPx.x - firstPx.x) * scale;
             const dy = (clickPx.y - firstPx.y) * scale;
             if (Math.sqrt(dx * dx + dy * dy) < 12) {
-              this._closePolygon();
+              // Single click near first vertex — no spurious vertex was added
+              this._closePolygon(false);
               return;
             }
           }
@@ -423,7 +422,9 @@ class MapManager {
         this._addPolygonVertex(e.latLng);
       });
       this._mapDblClickListener = this.map.addListener('dblclick', () => {
-        this._closePolygon();
+        // Google Maps fires a click immediately before dblclick on the same spot,
+        // so one spurious vertex was added and must be removed.
+        this._closePolygon(true);
       });
     } else if (mode === 'point') {
       this._mapClickListener = this.map.addListener('click', (e) => {
@@ -463,10 +464,8 @@ class MapManager {
     }
   }
 
-  _closePolygon() {
-    // Google Maps always fires `click` immediately before `dblclick` on the same
-    // position, so the double-click added one unwanted extra vertex. Remove it.
-    if (this.polygonPath.length > 0) {
+  _closePolygon(popLast = false) {
+    if (popLast && this.polygonPath.length > 0) {
       this.polygonPath.pop();
       const lastMarker = this.tempMarkers.pop();
       if (lastMarker) lastMarker.setMap(null);
