@@ -226,6 +226,7 @@ const UIRenderer = {
 
     const items = [
       { label: 'Rename', action: () => this._promptRenameLayer(layer, layerManager) },
+      { label: 'Style Layer', action: () => eventBus.emit('layer.styler.open', { layerId: layer.id }) },
       { label: 'Zoom to Layer', action: () => layerManager.fitToLayer(layer.id) },
       { label: 'Set as Draw Target', action: () => { sm.set('targetLayerForNewFeature', layer.id); this.renderLayerTree(); toastManager.info(`Draw target: "${layer.name}"`); } },
       { label: 'Toggle Labels', action: () => this._toggleLayerLabels(layer, layerManager) },
@@ -430,6 +431,17 @@ const UIRenderer = {
     // Action buttons
     const btnRow = Utils.createElement('div', { className: 'feature-action-row' });
 
+    // Edit Shape (polygons only)
+    if (feature.wkt && feature.wkt.trim()) {
+      const editShapeBtn = Utils.createElement('button', { type: 'button', className: 'btn btn-secondary' }, 'Edit Shape');
+      editShapeBtn.addEventListener('click', () => {
+        const targetLayerId = layerId || feature._layerId;
+        if (!targetLayerId) { toastManager.error('Cannot determine layer for this feature'); return; }
+        this._startShapeEdit(feature, targetLayerId);
+      });
+      btnRow.appendChild(editShapeBtn);
+    }
+
     const saveBtn = Utils.createElement('button', { type: 'button', className: 'btn btn-primary' }, 'Save');
     saveBtn.addEventListener('click', () => {
       const inputs = form.querySelectorAll('input, select, textarea');
@@ -473,6 +485,64 @@ const UIRenderer = {
     if (!container) {
       drawerManager.setTitle(`Feature: ${feature.name || 'Untitled'}`);
     }
+  },
+
+  // ─── Polygon shape editing ──────────────────────────────────────────────
+
+  _startShapeEdit(feature, layerId) {
+    const mm = AppRegistry.require('mapManager');
+    const polygon = mm.enableShapeEdit(layerId, feature.id);
+    if (!polygon) {
+      toastManager.error('Could not start shape editing for this feature');
+      return;
+    }
+
+    drawerManager.close();
+    mm.infoWindow?.close();
+
+    // Build a floating control bar
+    let bar = document.getElementById('shapeEditBar');
+    if (!bar) {
+      bar = Utils.createElement('div', { id: 'shapeEditBar', className: 'shape-edit-bar' });
+      document.getElementById('mapContainer')?.appendChild(bar);
+    }
+    bar.innerHTML = '';
+    bar.style.display = 'flex';
+
+    const hint = Utils.createElement('span', { className: 'shape-edit-hint' });
+    hint.textContent = 'Drag vertices to reshape · Drag midpoints to add new vertices';
+
+    const saveBtn = Utils.createElement('button', { className: 'btn btn-primary btn-sm' }, 'Save Shape');
+    const cancelBtn = Utils.createElement('button', { className: 'btn btn-secondary btn-sm' }, 'Cancel');
+
+    const cleanup = () => {
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+    };
+
+    saveBtn.addEventListener('click', () => {
+      const result = mm.commitShapeEdit();
+      if (!result) {
+        toastManager.error('Shape needs at least 3 points');
+        return;
+      }
+      const lm = AppRegistry.require('layerManager');
+      const ch = AppRegistry.require('commandHistory');
+      const oldProps = { wkt: feature.wkt, latitude: feature.latitude, longitude: feature.longitude };
+      ch.execute(new UpdateFeatureCommand(lm, layerId, feature.id, result, oldProps));
+      AppRegistry.require('syncController').scheduleSave();
+      toastManager.success('Shape updated');
+      cleanup();
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      mm.cancelShapeEdit();
+      cleanup();
+    });
+
+    bar.appendChild(hint);
+    bar.appendChild(saveBtn);
+    bar.appendChild(cancelBtn);
   },
 
   // ─── Analytics Tab ───────────────���─────────────────────────────���───────────

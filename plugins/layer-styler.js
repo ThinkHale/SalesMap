@@ -1,10 +1,10 @@
-// plugins/layer-styler.js — Visual style editor for individual layers
+// plugins/layer-styler.js — Visual style editor opened from a layer's context menu
 
 const LayerStylerPlugin = {
   id: 'layer-styler',
   name: 'Layer Styler',
-  version: '1.0.0',
-  description: 'Edit the visual style of individual layers: color, opacity, property-based coloring, and polygon stroke weight.',
+  version: '1.1.0',
+  description: 'Edit a layer\'s color, opacity, property-based coloring, and polygon stroke weight. Open from the layer\'s ⋯ menu.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
 
@@ -12,7 +12,7 @@ const LayerStylerPlugin = {
     'layers.read',
     'layers.write',
     'map.read',
-    'ui.slot:sidebar-panel',
+    'ui.modal',
     'ui.toast',
     'events.listen',
     'storage.read',
@@ -22,98 +22,61 @@ const LayerStylerPlugin = {
   configSchema: {},
 
   _api: null,
-  _panelBody: null,
   _selectedLayerId: null,
+  _drawerBody: null,
 
   init(api) {
     this._api = api;
 
-    api.ui.addSidebarPanel(body => {
-      this._panelBody = body;
-      this._render();
-    }, 'Layer Styler');
-
-    // Re-render layer list when layers change
-    const relayer = () => this._render();
-    api.events.on('layer.created', relayer);
-    api.events.on('layer.deleted', () => {
-      // If the selected layer was deleted, clear selection
-      if (this._selectedLayerId) {
-        const still = api.layers.get(this._selectedLayerId);
-        if (!still) this._selectedLayerId = null;
-      }
-      this._render();
+    // The UI Renderer emits this event from the layer ⋯ menu.
+    api.events.on('layer.styler.open', ({ layerId }) => {
+      this._openStyler(layerId);
     });
-    api.events.on('layer.renamed', relayer);
-    api.events.on('layers.imported', relayer);
+
+    // Re-render the drawer if the active layer changes underneath us.
+    const refresh = () => {
+      if (this._drawerBody && this._selectedLayerId) {
+        const layer = api.layers.get(this._selectedLayerId);
+        if (!layer) {
+          this._drawerBody = null;
+          this._selectedLayerId = null;
+          return;
+        }
+        this._renderControls(this._drawerBody, layer);
+      }
+    };
+    api.events.on('layer.deleted', refresh);
+    api.events.on('layer.renamed', refresh);
+    api.events.on('features.added', refresh);
+    api.events.on('feature.deleted', refresh);
   },
 
-  onEnable() { this._render(); },
-  destroy() { this._panelBody = null; },
+  destroy() { this._drawerBody = null; this._selectedLayerId = null; },
+
+  // ─── Drawer entry point ────────────────────────────────────────────────────
+
+  _openStyler(layerId) {
+    const layer = this._api.layers.get(layerId);
+    if (!layer) {
+      this._api.ui.toast.error('Layer not found');
+      return;
+    }
+    this._selectedLayerId = layerId;
+
+    this._api.ui.modal.openDrawer(body => {
+      this._drawerBody = body;
+      this._renderControls(body, layer);
+    }, `Style: ${layer.name}`);
+  },
 
   // ─── Main render ───────────────────────────────────────────────────────────
 
-  _render() {
-    const body = this._panelBody;
-    if (!body) return;
+  _renderControls(body, layer) {
     body.innerHTML = '';
 
-    const layers = this._api.layers.getAll();
-    if (layers.length === 0) {
-      body.appendChild(Utils.createElement('p', { className: 'no-data-msg' }, 'No layers to style.'));
-      return;
-    }
-
-    // Layer selector
-    const selGroup = Utils.createElement('div', { className: 'form-group' });
-    const selLabel = Utils.createElement('label', { className: 'form-label' }, 'Layer');
-    const sel = Utils.createElement('select', { className: 'form-control form-control-sm' });
-
-    const blankOpt = Utils.createElement('option', { value: '' }, '— select a layer —');
-    sel.appendChild(blankOpt);
-
-    layers.forEach(layer => {
-      const opt = Utils.createElement('option', { value: layer.id });
-      opt.textContent = layer.name;
-      if (layer.id === this._selectedLayerId) opt.selected = true;
-      sel.appendChild(opt);
-    });
-
-    sel.addEventListener('change', () => {
-      this._selectedLayerId = sel.value || null;
-      this._renderControls(body, sel);
-    });
-
-    selGroup.appendChild(selLabel);
-    selGroup.appendChild(sel);
-    body.appendChild(selGroup);
-
-    // Controls area (populated when a layer is selected)
-    const controlsArea = Utils.createElement('div', { id: 'styler-controls' });
-    body.appendChild(controlsArea);
-
-    if (this._selectedLayerId) {
-      sel.value = this._selectedLayerId;
-      this._renderControls(body, sel);
-    }
-  },
-
-  _renderControls(body, sel) {
-    // Remove any existing controls
-    const existing = body.querySelector('#styler-controls');
-    if (existing) existing.innerHTML = '';
-    const area = existing || body;
-
-    const layerId = sel.value;
-    if (!layerId) return;
-
-    const layer = this._api.layers.get(layerId);
-    if (!layer) return;
-
-    // ── Mode toggle ───────────────────────────────────────────────────────────
+    // Mode toggle
     const modeGroup = Utils.createElement('div', { className: 'form-group' });
     const modeLabel = Utils.createElement('label', { className: 'form-label' }, 'Style Mode');
-
     const modeRow = Utils.createElement('div', { className: 'styler-mode-row' });
     const modes = [
       { value: 'solid', label: 'Solid Color' },
@@ -126,33 +89,30 @@ const LayerStylerPlugin = {
         className: `btn btn-sm ${currentMode === value ? 'btn-primary' : 'btn-secondary'}`
       }, label);
       btn.addEventListener('click', () => {
-        this._selectedLayerId = layerId;
-        // Update mode on layer
         if (value === 'solid') {
-          this._api.layers.resetStyle(layerId);
+          this._api.layers.resetStyle(layer.id);
+        } else {
+          layer.styleType = 'property';
         }
-        this._renderControls(body, sel);
+        this._renderControls(body, this._api.layers.get(layer.id));
       });
       modeRow.appendChild(btn);
     });
 
     modeGroup.appendChild(modeLabel);
     modeGroup.appendChild(modeRow);
-    area.appendChild(modeGroup);
+    body.appendChild(modeGroup);
 
-    // ── Solid color controls ──────────────────────────────────────────────────
     if (currentMode === 'solid') {
-      this._renderSolidControls(area, layer);
+      this._renderSolidControls(body, layer);
     } else {
-      this._renderPropertyControls(area, layer);
+      this._renderPropertyControls(body, layer);
     }
 
-    // ── Opacity (always shown) ────────────────────────────────────────────────
-    this._renderOpacityControl(area, layer);
+    this._renderOpacityControl(body, layer);
 
-    // ── Polygon-specific controls ─────────────────────────────────────────────
     if (layer.type === 'polygon' || layer.type === 'mixed') {
-      this._renderPolygonControls(area, layer);
+      this._renderPolygonControls(body, layer);
     }
   },
 
@@ -164,11 +124,9 @@ const LayerStylerPlugin = {
 
     const row = Utils.createElement('div', { className: 'styler-color-row' });
 
-    // Color picker
     const colorInput = Utils.createElement('input', { type: 'color', className: 'styler-color-input' });
     colorInput.value = layer.color || '#0078d4';
 
-    // Preset swatches
     const swatchRow = Utils.createElement('div', { className: 'styler-swatches' });
     AppConfig.colors.primary.forEach(hex => {
       const swatch = Utils.createElement('div', { className: 'styler-swatch', title: hex });
@@ -209,7 +167,6 @@ const LayerStylerPlugin = {
       return;
     }
 
-    // Build list of categorical/numeric properties (exclude system props)
     const systemProps = new Set(AppConfig.featureInfo.systemProperties.concat(['importedAt', 'source', '_rowIndex']));
     const propCounts = {};
     features.forEach(f => {
@@ -226,7 +183,6 @@ const LayerStylerPlugin = {
       return;
     }
 
-    // Property selector
     const propGroup = Utils.createElement('div', { className: 'form-group' });
     const propLabel = Utils.createElement('label', { className: 'form-label' }, 'Color by Property');
     const propSel = Utils.createElement('select', { className: 'form-control form-control-sm' });
@@ -247,7 +203,6 @@ const LayerStylerPlugin = {
       valueMapArea.innerHTML = '';
       if (!property) return;
 
-      // Collect unique values
       const valueSet = new Set();
       features.forEach(f => {
         const v = f[property];
@@ -267,7 +222,6 @@ const LayerStylerPlugin = {
       note.textContent = `${uniqueValues.length} unique values:`;
       valueMapArea.appendChild(note);
 
-      // Build color map from stored overrides + defaults
       const stored = this._api.storage.get(`style_${layer.id}_propmap_${property}`) || {};
       const colorMap = {};
 
@@ -297,7 +251,6 @@ const LayerStylerPlugin = {
         valueMapArea.appendChild(row);
       });
 
-      // Apply button
       const applyBtn = Utils.createElement('button', { className: 'btn btn-primary btn-sm', style: { marginTop: '8px', width: '100%' } }, 'Apply Style');
       applyBtn.addEventListener('click', () => {
         this._api.storage.set(`style_${layer.id}_propmap_${property}`, colorMap);
@@ -320,7 +273,6 @@ const LayerStylerPlugin = {
     const layerData = this._api.map.getLayerData(layer.id);
     if (!layerData) return;
 
-    // Apply to markers
     layerData.markers.forEach(marker => {
       const val = String(marker._featureData[property] || '');
       const color = colorMap[val] || layer.color || AppConfig.colors.default;
@@ -328,7 +280,6 @@ const LayerStylerPlugin = {
       if (icon) marker.setIcon({ ...icon, fillColor: color });
     });
 
-    // Apply to polygons
     layerData.polygons.forEach(polygon => {
       const val = String(polygon._featureData[property] || '');
       const color = colorMap[val] || layer.color || AppConfig.colors.default;
@@ -370,7 +321,7 @@ const LayerStylerPlugin = {
     area.appendChild(group);
   },
 
-  // ─── Polygon stroke weight ────────────────────────────────────────────────
+  // ─── Polygon stroke / fill ────────────────────────────────────────────────
 
   _renderPolygonControls(area, layer) {
     const layerData = this._api.map.getLayerData(layer.id);
@@ -402,7 +353,6 @@ const LayerStylerPlugin = {
     group.appendChild(slider);
     area.appendChild(group);
 
-    // Fill opacity (separate from overall layer opacity)
     const storedFill = this._api.storage.get(`style_${layer.id}_fillOpacity`) || AppConfig.polygon.fillOpacity;
 
     const fillGroup = Utils.createElement('div', { className: 'form-group' });

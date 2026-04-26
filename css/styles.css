@@ -556,6 +556,15 @@ textarea.form-control { resize: vertical; }
   white-space: nowrap;
 }
 
+.shape-edit-bar {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: white; padding: 8px 12px; border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.15); border: 1px solid #c8c6c4;
+  display: none; align-items: center; gap: 10px;
+  z-index: 30; font-size: 12px;
+}
+.shape-edit-hint { color: #605e5c; }
+
 #drawingHint {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   background: rgba(0,120,212,0.9); color: white; padding: 8px 16px; border-radius: 20px;

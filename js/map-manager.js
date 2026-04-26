@@ -433,35 +433,44 @@ class MapManager {
     this.polygonPath = [];
     this.map.setOptions({ draggableCursor: 'crosshair', disableDoubleClickZoom: true });
 
-    if (mode === 'polygon') {
-      this._mapClickListener = this.map.addListener('click', (e) => {
-        // Close polygon if user clicks near the first vertex
+    // Route clicks on existing polygons/markers through to the drawing handler
+    // so the user can draw on top of existing features.
+    this.ignoreFeatureClicks = true;
+
+    const handleClickAt = (latLng) => {
+      if (this.drawingMode === 'polygon') {
         if (this.polygonPath.length >= 3) {
           const first = this.polygonPath[0];
-          const clickPx = this.map.getProjection()?.fromLatLngToPoint(e.latLng);
-          const firstPx = this.map.getProjection()?.fromLatLngToPoint(first);
-          if (clickPx && firstPx) {
+          const proj = this.map.getProjection();
+          if (proj) {
+            const clickPx = proj.fromLatLngToPoint(latLng);
+            const firstPx = proj.fromLatLngToPoint(first);
             const scale = Math.pow(2, this.map.getZoom());
             const dx = (clickPx.x - firstPx.x) * scale;
             const dy = (clickPx.y - firstPx.y) * scale;
             if (Math.sqrt(dx * dx + dy * dy) < 12) {
-              // Single click near first vertex — no spurious vertex was added
               this._closePolygon(false);
               return;
             }
           }
         }
-        this._addPolygonVertex(e.latLng);
-      });
+        this._addPolygonVertex(latLng);
+      } else if (this.drawingMode === 'point') {
+        this._placePoint(latLng);
+      }
+    };
+
+    this._overlayClickCallback = handleClickAt;
+
+    if (mode === 'polygon') {
+      this._mapClickListener = this.map.addListener('click', (e) => handleClickAt(e.latLng));
       this._mapDblClickListener = this.map.addListener('dblclick', () => {
         // Google Maps fires a click immediately before dblclick on the same spot,
         // so one spurious vertex was added and must be removed.
         this._closePolygon(true);
       });
     } else if (mode === 'point') {
-      this._mapClickListener = this.map.addListener('click', (e) => {
-        this._placePoint(e.latLng);
-      });
+      this._mapClickListener = this.map.addListener('click', (e) => handleClickAt(e.latLng));
     }
   }
 
@@ -479,7 +488,11 @@ class MapManager {
         strokeColor: '#ffffff',
         strokeWeight: 1.5
       },
-      draggable: false
+      draggable: false,
+      // Vertex markers must not capture clicks — clicks need to reach the map
+      // so the proximity check on the first vertex can close the polygon.
+      clickable: false,
+      zIndex: 9999
     });
     this.tempMarkers.push(vertexMarker);
 
@@ -545,7 +558,62 @@ class MapManager {
     }
     this.polygonPath = [];
     this.drawingMode = null;
-    if (this.map) this.map.setOptions({ draggableCursor: null });
+    this.ignoreFeatureClicks = false;
+    this._overlayClickCallback = null;
+    if (this.map) this.map.setOptions({ draggableCursor: null, disableDoubleClickZoom: false });
+  }
+
+  // ─── Polygon shape editing ────────────────────────────────────────────────
+
+  enableShapeEdit(layerId, featureId) {
+    const layerData = this.layers.get(layerId);
+    if (!layerData) return null;
+    const polygon = layerData.polygons.find(p => p._featureId === featureId);
+    if (!polygon) return null;
+
+    // Snapshot the current path so we can cancel
+    const snapshot = polygon.getPath().getArray().map(p => ({ lat: p.lat(), lng: p.lng() }));
+    polygon._editSnapshot = snapshot;
+
+    polygon.setOptions({ editable: true, draggable: true, zIndex: 1000 });
+    this._editingPolygon = polygon;
+    return polygon;
+  }
+
+  cancelShapeEdit() {
+    const polygon = this._editingPolygon;
+    if (!polygon) return;
+    if (polygon._editSnapshot) {
+      polygon.setPath(polygon._editSnapshot.map(p => new google.maps.LatLng(p.lat, p.lng)));
+      delete polygon._editSnapshot;
+    }
+    polygon.setOptions({ editable: false, draggable: false, zIndex: undefined });
+    this._editingPolygon = null;
+  }
+
+  commitShapeEdit() {
+    const polygon = this._editingPolygon;
+    if (!polygon) return null;
+    const path = polygon.getPath().getArray();
+    if (path.length < 3) return null;
+
+    const coords = path.map(p => `${p.lng()} ${p.lat()}`);
+    coords.push(coords[0]);
+    const wkt = `POLYGON((${coords.join(', ')}))`;
+
+    const latSum = path.reduce((acc, p) => acc + p.lat(), 0);
+    const lngSum = path.reduce((acc, p) => acc + p.lng(), 0);
+    const centroid = { lat: latSum / path.length, lng: lngSum / path.length };
+
+    polygon.setOptions({ editable: false, draggable: false, zIndex: undefined });
+    delete polygon._editSnapshot;
+    this._editingPolygon = null;
+
+    return { wkt, latitude: centroid.lat, longitude: centroid.lng };
+  }
+
+  isEditingShape() {
+    return !!this._editingPolygon;
   }
 
   // ─── Map controls ─────────────────────────────────────────────────────────
