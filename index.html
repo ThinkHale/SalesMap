@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="SalesMapper v4 — Enterprise Sales Territory Mapping">
+  <title>SalesMapper v4</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- ── Loading Overlay ─────────────────────────────────────────────────────── -->
+<div id="loadingOverlay" style="display:flex;">
+  <div class="loading-spinner"></div>
+  <div id="loadingMessage">Initializing...</div>
+</div>
+
+<!-- ── Toast Container ─────────────────────────────────────────────────────── -->
+<div id="toast-container" aria-live="polite"></div>
+
+<!-- ── Notification Panel (absolute, over map) ─────────────────────────────── -->
+<div id="notificationPanel" role="region" aria-label="Notifications" style="display:none;"></div>
+
+<!-- ── App Shell ─────────────────────────────────────────────────────────────── -->
+<div id="appShell">
+
+  <!-- ── Top Bar ─────────────────────────────────────────────────────────── -->
+  <div id="topBar">
+    <div id="appLogo">Sales<span>Map</span></div>
+    <div class="topbar-divider"></div>
+
+    <!-- Workspace selector -->
+    <select id="profileSelect" title="Select workspace" aria-label="Select workspace">
+      <option>Loading...</option>
+    </select>
+    <button class="topbar-btn" id="newProfileBtn" title="New workspace">＋</button>
+
+    <div class="topbar-divider"></div>
+
+    <!-- Upload -->
+    <button class="topbar-btn" id="uploadBtn" title="Import CSV / Excel (Ctrl+O)">
+      ⬆ Import
+    </button>
+    <button class="topbar-btn" id="pasteImportBtn" title="Paste CSV data">
+      📋 Paste
+    </button>
+    <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls,.txt" style="display:none;" aria-label="Upload CSV or Excel file">
+
+    <div class="topbar-divider"></div>
+
+    <!-- Undo/Redo -->
+    <button class="topbar-btn" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
+    <button class="topbar-btn" id="redoBtn" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
+
+    <div class="topbar-divider"></div>
+
+    <!-- Drawing tools -->
+    <button class="topbar-btn" id="drawPointBtn" title="Draw Point">📍 Point</button>
+    <button class="topbar-btn" id="drawPolygonBtn" title="Draw Polygon">⬡ Polygon</button>
+    <button class="topbar-btn" id="cancelDrawBtn" title="Cancel drawing (Esc)" style="display:none;">✕ Cancel</button>
+
+    <!-- Right side -->
+    <div id="topBarRight">
+      <div id="pluginToolbarSlot"></div>
+
+      <button class="topbar-btn" id="distanceToolBtn" title="Measure distance / radius">📏 Measure</button>
+      <button class="topbar-btn" id="exportMapBtn" title="Export view-only map">⬇ Export</button>
+      <button class="topbar-btn" id="pluginsBtn" title="Manage plugins">🔌 Plugins</button>
+
+      <div class="topbar-divider"></div>
+
+      <!-- Notifications -->
+      <div class="notification-btn-wrap">
+        <button class="topbar-btn" id="notificationBtn" title="Notifications" aria-label="Notifications">
+          🔔
+        </button>
+        <span id="notificationBadge" role="status" aria-label="Unread notifications"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Main Content ─────────────────────────────────────────────────────── -->
+  <div id="mainContent">
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
+    <div id="sidebar" role="complementary" aria-label="Layer panel">
+
+      <!-- Tab buttons -->
+      <div class="sidebar-tabs" role="tablist">
+        <button class="sidebar-tab-btn active" data-tab="layers" role="tab" aria-selected="true">Layers</button>
+        <button class="sidebar-tab-btn" data-tab="analytics" role="tab" aria-selected="false">Analytics</button>
+        <button class="sidebar-tab-btn" data-tab="activity" role="tab" aria-selected="false">Activity</button>
+      </div>
+
+      <!-- ── Layers Tab ─────────────────────────────────────────────��── -->
+      <div id="tab-layers" class="sidebar-tab-content active" role="tabpanel">
+        <!-- Layers toolbar -->
+        <div class="sidebar-toolbar">
+          <button class="btn btn-secondary btn-sm" id="fitAllBtn" title="Fit map to all layers">⤢ Fit All</button>
+          <button class="btn btn-secondary btn-sm" id="zoomInBtn" title="Zoom in">+</button>
+          <button class="btn btn-secondary btn-sm" id="zoomOutBtn" title="Zoom out">−</button>
+          <button class="btn btn-secondary btn-sm" id="resetViewBtn" title="Reset to default view">⌂</button>
+          <label class="btn btn-secondary btn-sm settings-toggle" title="Real-time sync" style="cursor:pointer;">
+            <input type="checkbox" id="realtimeSyncToggle" checked style="margin-right:4px;"> Sync
+          </label>
+        </div>
+
+        <!-- Layer list -->
+        <div id="layerList" role="list" aria-label="Layers">
+          <div class="layer-list-empty">No layers yet.<br>Import a CSV to get started.</div>
+        </div>
+
+        <!-- Plugin sidebar slot -->
+        <div id="pluginSidebarSlot"></div>
+      </div>
+
+      <!-- ── Analytics Tab ────────────────────────────────────────────── -->
+      <div id="tab-analytics" class="sidebar-tab-content" role="tabpanel">
+        <div id="analyticsPanel">
+          <div class="analytics-empty">No layers loaded. Import data to see analytics.</div>
+        </div>
+      </div>
+
+      <!-- ── Activity Tab ───────────────────────────────────────��─────── -->
+      <div id="tab-activity" class="sidebar-tab-content" role="tabpanel">
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
+          <button class="btn btn-secondary btn-sm" id="exportActivityBtn">Export CSV</button>
+        </div>
+        <div id="activityList" role="log" aria-label="Activity log" aria-live="polite"></div>
+      </div>
+
+    </div>
+    <!-- /sidebar -->
+
+    <!-- ── Map Container ────────────────────────────────────────────────── -->
+    <div id="mapContainer">
+      <div id="googleMap" aria-label="Sales territory map"></div>
+
+      <!-- Search bar (floating over map) -->
+      <div id="searchBar" role="search">
+        <input type="text" id="mapSearchInput" placeholder="Search address or place..." aria-label="Search location">
+        <button id="mapSearchBtn" aria-label="Search">🔍</button>
+      </div>
+
+      <!-- Drawing hint (floating over map) -->
+      <div id="drawingHint" role="status" style="display:none;"></div>
+
+      <!-- Distance tool instructions -->
+      <div id="measurementInstructions" role="status" style="display:none;"></div>
+
+      <!-- Map controls (floating) -->
+      <div id="mapControlsPanel" aria-label="Map controls">
+        <button class="map-ctrl-btn" id="zoomInBtn2" title="Zoom in" onclick="AppRegistry.get('mapManager')?.zoomIn()">+</button>
+        <button class="map-ctrl-btn" id="zoomOutBtn2" title="Zoom out" onclick="AppRegistry.get('mapManager')?.zoomOut()">−</button>
+        <button class="map-ctrl-btn" id="fitAllBtn2" title="Fit all" onclick="AppRegistry.get('layerManager')?.fitToAll()">⤢</button>
+      </div>
+    </div>
+    <!-- /mapContainer -->
+
+    <!-- ── Detail Drawer (slides in from right) ─────────────────────────── -->
+    <div id="detailDrawer" role="dialog" aria-modal="false" aria-labelledby="drawerTitle">
+      <div class="drawer-header">
+        <div id="drawerTitle">Details</div>
+        <button id="drawerClose" aria-label="Close panel">×</button>
+      </div>
+      <div id="drawerBody"></div>
+    </div>
+
+  </div>
+  <!-- /mainContent -->
+
+</div>
+<!-- /appShell -->
+
+<!-- ── Plugins Modal ─────────────────────────────────────────────────────── -->
+<div id="pluginsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="pluginsModalTitle" style="display:none;">
+  <div class="modal-content">
+    <div class="modal-header">
+      <div class="modal-title" id="pluginsModalTitle">Plugins</div>
+      <button class="modal-close" data-close-modal="pluginsModal" aria-label="Close">×</button>
+    </div>
+    <div id="pluginsList">Loading...</div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" data-close-modal="pluginsModal">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Context menus (populated dynamically) ──────────────────────────────���── -->
+<div id="layerContextMenu" class="context-menu" role="menu" style="display:none;"></div>
+<div id="groupContextMenu" class="context-menu" role="menu" style="display:none;"></div>
+
+<!-- ═══════════════════════ CDN DEPENDENCIES ═════════════════════════════════ -->
+
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+
+<!-- Data parsing -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- Geometry -->
+<script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"></script>
+
+<!-- Clustering -->
+<script src="https://unpkg.com/@googlemaps/markerclusterer@2.5.3/dist/index.min.js"></script>
+
+<!-- ═══════════════════════ APP MODULES (load order = dependency graph) ════════ -->
+<script src="js/config.js"></script>
+<script src="js/utils.js"></script>
+<script src="js/error-handler.js"></script>
+<script src="js/app-registry.js"></script>
+<script src="js/state-manager.js"></script>
+<script src="js/ui-components.js"></script>
+<script src="js/validation-service.js"></script>
+<script src="js/data-services.js"></script>
+<script src="js/plugin-api.js"></script>
+<script src="plugins/heatmap-overlay.js"></script>
+<script src="plugins/example-plugin.js"></script>
+<script src="js/firebase-config.js"></script>
+<script src="js/geocoding-service.js"></script>
+<script src="js/csv-parser.js"></script>
+<script src="js/map-manager.js"></script>
+<script src="js/layer-manager.js"></script>
+<script src="js/command-history.js"></script>
+<script src="js/analytics-panel.js"></script>
+<script src="js/cluster-manager.js"></script>
+<script src="js/distance-tool.js"></script>
+<script src="js/activity-log.js"></script>
+<script src="js/notification-center.js"></script>
+<script src="js/map-export.js"></script>
+<script src="js/controllers/sync-controller.js"></script>
+<script src="js/controllers/import-controller.js"></script>
+<script src="js/controllers/drawing-controller.js"></script>
+<script src="js/controllers/profile-controller.js"></script>
+<script src="js/controllers/ui-renderer.js"></script>
+<script src="js/app.js"></script>
+
+<!-- Google Maps — LAST, triggers initMap callback -->
+<!-- Replace YOUR_GOOGLE_MAPS_API_KEY with your actual key -->
+<script async
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBykC-Ud0Av1cNBFcfelKjBQojtzwC3sws&libraries=places,marker,visualization,geometry&callback=initMap"
+  onerror="loadingManager.forceHide(); toastManager.error('Google Maps failed to load. Check your API key in config.js and index.html.')">
+</script>
+
+</body>
+</html>

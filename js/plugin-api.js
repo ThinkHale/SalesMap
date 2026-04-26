@@ -1,0 +1,440 @@
+// js/plugin-api.js — PluginRegistry + PluginManager
+
+const VALID_PERMISSIONS = new Set([
+  'layers.read', 'layers.write',
+  'map.read', 'map.write',
+  'ui.toast', 'ui.modal',
+  'ui.slot:toolbar', 'ui.slot:sidebar-panel', 'ui.slot:context-menu',
+  'storage.read', 'storage.write',
+  'events.listen', 'events.emit',
+  'hooks.register'
+]);
+
+// ─── PluginRegistry ────────────────────────────────────────────────────────
+class PluginRegistry {
+  constructor() {
+    this.registry = new Map();
+  }
+
+  register(def) {
+    this._validateManifest(def);
+    this.registry.set(def.id, def);
+    console.log(`[PluginRegistry] Registered plugin: ${def.id} v${def.version}`);
+  }
+
+  async loadFromURL(url) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = url;
+      s.onload = resolve;
+      s.onerror = () => reject(new Error(`Failed to load plugin from ${url}`));
+      document.head.appendChild(s);
+    });
+  }
+
+  _validateManifest(def) {
+    if (!def.id || !def.name || !def.version) {
+      throw AppErrorHandler.create(
+        'Plugin missing id, name, or version',
+        'Invalid plugin manifest: must have id, name, and version'
+      );
+    }
+    if (!/^[a-z0-9-]+$/.test(def.id)) {
+      throw AppErrorHandler.create(
+        `Plugin id must be kebab-case: ${def.id}`,
+        `Plugin id "${def.id}" must use only lowercase letters, numbers, and hyphens`
+      );
+    }
+    (def.permissions || []).forEach(p => {
+      if (!VALID_PERMISSIONS.has(p)) {
+        throw AppErrorHandler.create(
+          `Unknown permission: ${p}`,
+          `Plugin "${def.id}" declared unknown permission: ${p}`
+        );
+      }
+    });
+  }
+
+  getDefinition(id) { return this.registry.get(id) || null; }
+  getAllDefinitions() { return Array.from(this.registry.values()); }
+  has(id) { return this.registry.has(id); }
+  unregister(id) { this.registry.delete(id); }
+}
+
+// ─── PluginManager ─────────────────────────────────────────────────────────
+class PluginManager {
+  constructor() {
+    this.plugins = new Map();
+    this.hooks = new Map();
+    this.endpoints = new Map();
+    this._uiSlots = { toolbar: [], 'sidebar-panel': [], 'context-menu': [] };
+  }
+
+  initialize(pluginId) {
+    const registry = AppRegistry.require('pluginRegistry');
+    const def = registry.getDefinition(pluginId);
+    if (!def) throw new Error(`Plugin definition not found: ${pluginId}`);
+    if (this.plugins.has(pluginId)) {
+      console.warn(`[PluginManager] Plugin already initialized: ${pluginId}`);
+      return;
+    }
+
+    const config = this._loadConfig(pluginId, def.configSchema || {});
+    const api = this._buildScopedAPI(def, config);
+
+    try {
+      if (typeof def.init === 'function') def.init(api);
+    } catch (e) {
+      AppErrorHandler.handle(e, `PluginManager.init:${pluginId}`);
+      return;
+    }
+
+    // Register hooks
+    if (def.hooks) {
+      Object.entries(def.hooks).forEach(([hookName, { handler, priority = 10 }]) => {
+        if (!this.hooks.has(hookName)) this.hooks.set(hookName, []);
+        this.hooks.get(hookName).push({ pluginId, handler, priority });
+        this.hooks.get(hookName).sort((a, b) => a.priority - b.priority);
+      });
+    }
+
+    // Register endpoints
+    if (def.endpoints) {
+      Object.entries(def.endpoints).forEach(([name, handler]) => {
+        this.endpoints.set(`${pluginId}:${name}`, params => handler(params, api));
+      });
+    }
+
+    this.plugins.set(pluginId, {
+      def, enabled: true, config, api,
+      registeredAt: Utils.formatDate()
+    });
+
+    eventBus.emit('plugin.initialized', { pluginId });
+  }
+
+  enable(pluginId) {
+    const p = this.plugins.get(pluginId);
+    if (!p) return;
+    p.enabled = true;
+    try { if (typeof p.def.onEnable === 'function') p.def.onEnable(); } catch (e) { AppErrorHandler.handle(e, `plugin.onEnable:${pluginId}`); }
+    eventBus.emit('plugin.enabled', { pluginId });
+  }
+
+  disable(pluginId) {
+    const p = this.plugins.get(pluginId);
+    if (!p) return;
+    p.enabled = false;
+    try { if (typeof p.def.onDisable === 'function') p.def.onDisable(); } catch (e) { AppErrorHandler.handle(e, `plugin.onDisable:${pluginId}`); }
+    eventBus.emit('plugin.disabled', { pluginId });
+  }
+
+  destroy(pluginId) {
+    const p = this.plugins.get(pluginId);
+    if (!p) return;
+    try { if (typeof p.def.destroy === 'function') p.def.destroy(); } catch (e) { console.error(`[PluginManager] destroy error:`, e); }
+
+    this.hooks.forEach((handlers, hookName) => {
+      this.hooks.set(hookName, handlers.filter(h => h.pluginId !== pluginId));
+    });
+    [...this.endpoints.keys()].filter(k => k.startsWith(`${pluginId}:`)).forEach(k => this.endpoints.delete(k));
+    Object.keys(this._uiSlots).forEach(slot => {
+      this._uiSlots[slot] = this._uiSlots[slot].filter(item => item.pluginId !== pluginId);
+    });
+    this.plugins.delete(pluginId);
+    eventBus.emit('plugin.destroyed', { pluginId });
+  }
+
+  async executeHook(hookName, data) {
+    if (!this.hooks.has(hookName)) return data;
+    let result = data;
+    for (const { pluginId, handler } of this.hooks.get(hookName)) {
+      const p = this.plugins.get(pluginId);
+      if (!p || !p.enabled) continue;
+      try {
+        const ret = await handler(result, { pluginId, hookName });
+        if (ret !== undefined) result = ret;
+      } catch (e) {
+        console.error(`[Plugin hook error] ${hookName} in ${pluginId}:`, e);
+        // Error isolation: hook failure never stops the pipeline
+      }
+    }
+    return result;
+  }
+
+  async callEndpoint(namespacedEndpoint, params = {}) {
+    const handler = this.endpoints.get(namespacedEndpoint);
+    if (!handler) throw new Error(`Endpoint not found: ${namespacedEndpoint}`);
+    const [pluginId] = namespacedEndpoint.split(':');
+    const p = this.plugins.get(pluginId);
+    if (!p || !p.enabled) throw new Error(`Plugin ${pluginId} is not enabled`);
+    return await handler(params);
+  }
+
+  getStatus(pluginId) {
+    return this.plugins.get(pluginId) || null;
+  }
+
+  getAllStatus() {
+    return Array.from(this.plugins.entries()).map(([id, p]) => ({
+      id,
+      name: p.def.name,
+      version: p.def.version,
+      enabled: p.enabled,
+      registeredAt: p.registeredAt
+    }));
+  }
+
+  _loadConfig(pluginId, schema) {
+    const defaults = {};
+    Object.entries(schema).forEach(([k, v]) => { defaults[k] = v.default !== undefined ? v.default : null; });
+    const stored = storageService.get(`${AppConfig.storage.pluginConfigPrefix}${pluginId}`);
+    return Object.assign({}, defaults, stored || {});
+  }
+
+  _saveConfig(pluginId, config) {
+    storageService.set(`${AppConfig.storage.pluginConfigPrefix}${pluginId}`, config);
+  }
+
+  _buildScopedAPI(def, config) {
+    const perms = new Set(def.permissions || []);
+    const id = def.id;
+    const self = this;
+
+    const api = {
+      pluginId: id,
+      config: {
+        get: key => key ? config[key] : { ...config },
+        set: (key, val) => {
+          config[key] = val;
+          self._saveConfig(id, config);
+        },
+        reset: () => {
+          const defaults = {};
+          Object.entries(def.configSchema || {}).forEach(([k, v]) => { defaults[k] = v.default; });
+          Object.assign(config, defaults);
+          self._saveConfig(id, config);
+        }
+      },
+      utils: Utils,
+      ipc: {
+        call: (ep, params) => self.callEndpoint(ep, params)
+      }
+    };
+
+    // layers
+    if (perms.has('layers.read') || perms.has('layers.write')) {
+      api.layers = {};
+      const lm = () => AppRegistry.require('layerManager');
+      if (perms.has('layers.read')) {
+        api.layers.getAll = () => lm().getAllLayers();
+        api.layers.get = layerId => lm().getLayer(layerId);
+      }
+      if (perms.has('layers.write')) {
+        api.layers.create = (name, features, type, meta) => lm().createLayer(name, features, type, meta);
+        api.layers.delete = layerId => lm().deleteLayer(layerId);
+        api.layers.addFeatures = (layerId, features) => lm().addFeaturesToLayer(layerId, features);
+        api.layers.updateFeature = (layerId, fId, props) => lm().updateFeature(layerId, fId, props);
+        api.layers.deleteFeature = (layerId, fId) => lm().deleteFeature(layerId, fId);
+      }
+    }
+
+    // map
+    if (perms.has('map.read') || perms.has('map.write')) {
+      api.map = {};
+      const mm = () => AppRegistry.require('mapManager');
+      if (perms.has('map.read')) {
+        api.map.getMap = () => mm().map;
+        api.map.getCenter = () => mm().map.getCenter();
+        api.map.getZoom = () => mm().map.getZoom();
+        api.map.getBounds = () => mm().map.getBounds();
+      }
+      if (perms.has('map.write')) {
+        api.map.setCenter = (lat, lng, zoom) => mm().setCenter(lat, lng, zoom);
+        api.map.fitBounds = bounds => mm().map.fitBounds(bounds);
+        api.map.addOverlay = overlay => overlay.setMap(mm().map);
+        api.map.removeOverlay = overlay => overlay.setMap(null);
+      }
+    }
+
+    // ui.toast
+    if (perms.has('ui.toast')) {
+      api.ui = api.ui || {};
+      api.ui.toast = {
+        success: msg => toastManager.success(`[${def.name}] ${msg}`),
+        error: msg => toastManager.error(`[${def.name}] ${msg}`),
+        info: msg => toastManager.info(`[${def.name}] ${msg}`),
+        warning: msg => toastManager.warning(`[${def.name}] ${msg}`)
+      };
+    }
+
+    // ui.modal
+    if (perms.has('ui.modal')) {
+      api.ui = api.ui || {};
+      api.ui.modal = {
+        show: modalId => modalManager.show(modalId),
+        close: modalId => modalManager.close(modalId),
+        showLoading: msg => loadingManager.show(msg),
+        hideLoading: () => loadingManager.hide(),
+        openDrawer: (contentFn, title, options) => drawerManager.open(contentFn, title, options)
+      };
+    }
+
+    // ui slots
+    if (perms.has('ui.slot:toolbar')) {
+      api.ui = api.ui || {};
+      api.ui.addToolbarButton = (opts) => {
+        const btn = Utils.createElement('button', {
+          className: 'plugin-toolbar-btn',
+          title: Utils.escapeHtml(opts.tooltip || opts.label)
+        });
+        btn.textContent = opts.icon || opts.label;
+        if (opts.onClick) btn.addEventListener('click', opts.onClick);
+        const toolbar = document.getElementById('pluginToolbarSlot');
+        if (toolbar) toolbar.appendChild(btn);
+        self._uiSlots.toolbar.push({ pluginId: id, element: btn });
+        return btn;
+      };
+    }
+
+    if (perms.has('ui.slot:sidebar-panel')) {
+      api.ui = api.ui || {};
+      api.ui.addSidebarPanel = (contentFn, title) => {
+        const panel = Utils.createElement('div', { className: 'plugin-sidebar-panel' });
+        const header = Utils.createElement('div', { className: 'plugin-panel-header' }, title);
+        const body = Utils.createElement('div', { className: 'plugin-panel-body' });
+        panel.appendChild(header);
+        panel.appendChild(body);
+        if (typeof contentFn === 'function') contentFn(body);
+        const container = document.getElementById('pluginSidebarSlot');
+        if (container) container.appendChild(panel);
+        self._uiSlots['sidebar-panel'].push({ pluginId: id, element: panel });
+        return { panel, body };
+      };
+    }
+
+    if (perms.has('ui.slot:context-menu')) {
+      api.ui = api.ui || {};
+      api.ui.addContextMenuItem = (menuId, opts) => {
+        const menu = document.getElementById(menuId);
+        if (menu) {
+          const item = Utils.createElement('div', { className: 'context-menu-item plugin-menu-item' }, opts.label);
+          if (opts.onClick) item.addEventListener('click', opts.onClick);
+          menu.appendChild(item);
+          self._uiSlots['context-menu'].push({ pluginId: id, element: item });
+          return item;
+        }
+        return null;
+      };
+    }
+
+    // storage
+    if (perms.has('storage.read') || perms.has('storage.write')) {
+      api.storage = {};
+      const storageKey = k => `${AppConfig.storage.pluginConfigPrefix}${id}_data_${k}`;
+      if (perms.has('storage.read')) {
+        api.storage.get = k => storageService.get(storageKey(k));
+      }
+      if (perms.has('storage.write')) {
+        api.storage.set = (k, v) => storageService.set(storageKey(k), v);
+        api.storage.remove = k => storageService.remove(storageKey(k));
+      }
+    }
+
+    // events
+    if (perms.has('events.listen')) {
+      api.events = api.events || {};
+      api.events.on = (event, cb) => eventBus.on(event, cb);
+      api.events.once = (event, cb) => eventBus.once(event, cb);
+    }
+
+    if (perms.has('events.emit')) {
+      api.events = api.events || {};
+      api.events.emit = (event, data) => eventBus.emit(`${id}:${event}`, data);
+    }
+
+    // hooks
+    if (perms.has('hooks.register')) {
+      api.hooks = {
+        register: (hookName, handler, priority = 10) => {
+          if (!self.hooks.has(hookName)) self.hooks.set(hookName, []);
+          self.hooks.get(hookName).push({ pluginId: id, handler, priority });
+          self.hooks.get(hookName).sort((a, b) => a.priority - b.priority);
+        }
+      };
+    }
+
+    return api;
+  }
+
+  // Build auto-generated settings UI from configSchema
+  buildSettingsUI(pluginId) {
+    const p = this.plugins.get(pluginId);
+    if (!p || !p.def.configSchema) return null;
+
+    const form = Utils.createElement('div', { className: 'plugin-settings-form' });
+    Object.entries(p.def.configSchema).forEach(([key, schema]) => {
+      const group = Utils.createElement('div', { className: 'settings-field' });
+      const label = Utils.createElement('label');
+      label.textContent = schema.label || key;
+
+      let input;
+      if (schema.type === 'boolean') {
+        input = Utils.createElement('input', { type: 'checkbox', name: key });
+        if (p.config[key]) input.checked = true;
+      } else if (schema.type === 'select') {
+        input = Utils.createElement('select', { name: key });
+        (schema.options || []).forEach(opt => {
+          const option = Utils.createElement('option', { value: opt }, opt);
+          if (p.config[key] === opt) option.selected = true;
+          input.appendChild(option);
+        });
+      } else if (schema.type === 'number') {
+        input = Utils.createElement('input', {
+          type: 'number', name: key,
+          ...(schema.min !== undefined ? { min: schema.min } : {}),
+          ...(schema.max !== undefined ? { max: schema.max } : {})
+        });
+        input.value = p.config[key] !== undefined ? p.config[key] : (schema.default || '');
+      } else {
+        input = Utils.createElement('input', { type: 'text', name: key });
+        input.value = p.config[key] !== undefined ? p.config[key] : (schema.default || '');
+      }
+
+      group.appendChild(label);
+      group.appendChild(input);
+      form.appendChild(group);
+    });
+
+    const saveBtn = Utils.createElement('button', { className: 'btn btn-primary btn-sm' }, 'Save Settings');
+    saveBtn.addEventListener('click', () => {
+      const inputs = form.querySelectorAll('input, select');
+      inputs.forEach(inp => {
+        if (!inp.name) return;
+        const schema = p.def.configSchema[inp.name];
+        if (!schema) return;
+        if (schema.type === 'boolean') p.api.config.set(inp.name, inp.checked);
+        else if (schema.type === 'number') p.api.config.set(inp.name, parseFloat(inp.value));
+        else p.api.config.set(inp.name, inp.value);
+      });
+      toastManager.success('Plugin settings saved');
+    });
+    form.appendChild(saveBtn);
+    return form;
+  }
+}
+
+// ─── Globals ────────────────────────────────────────────────────────────────
+const pluginRegistry = new PluginRegistry();
+const pluginManager = new PluginManager();
+
+AppRegistry.register('pluginRegistry', pluginRegistry);
+AppRegistry.register('pluginManager', pluginManager);
+
+// Restore persisted plugin enable/disable states
+function restorePluginStates() {
+  const states = storageService.get('pluginStates') || {};
+  pluginManager.getAllStatus().forEach(({ id }) => {
+    if (states[id] === false) pluginManager.disable(id);
+  });
+}
