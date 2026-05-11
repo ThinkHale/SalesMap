@@ -94,9 +94,14 @@ class MapManager {
     const tierColor = AppConfig.colors.tierMap[String(feature.tier).toLowerCase()] || null;
     const fillColor = tierColor || color;
 
+    // When clustering is active, the ClusterManager controls marker visibility.
+    // Create with map: null so the clusterer can place markers without a flash.
+    const cm = AppRegistry.has('clusterManager') ? AppRegistry.get('clusterManager') : null;
+    const useCluster = cm && cm._enabled;
+
     const marker = new google.maps.Marker({
       position: { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) },
-      map: layerData.visible ? this.map : null,
+      map: useCluster ? null : (layerData.visible ? this.map : null),
       title: feature.name || '',
       icon: {
         path: AppConfig.marker.pinPath,
@@ -124,7 +129,7 @@ class MapManager {
 
     layerData.markers.push(marker);
 
-    // Register with cluster manager if available
+    // Register with cluster manager — it controls the marker's map visibility
     if (AppRegistry.has('clusterManager')) {
       AppRegistry.get('clusterManager').addMarkersToCluster(layerId, [marker]);
     }
@@ -281,7 +286,13 @@ class MapManager {
     const layerData = this.layers.get(layerId);
     if (!layerData) return;
     layerData.visible = visible;
-    layerData.markers.forEach(m => m.setMap(visible ? this.map : null));
+    // Marker visibility is delegated to ClusterManager when present so that
+    // clustering state is properly maintained (cluster icons shown/hidden).
+    if (AppRegistry.has('clusterManager')) {
+      AppRegistry.get('clusterManager').setLayerVisible(layerId, visible);
+    } else {
+      layerData.markers.forEach(m => m.setMap(visible ? this.map : null));
+    }
     layerData.polygons.forEach(p => p.setMap(visible ? this.map : null));
     layerData.labels.forEach(l => l.setMap(visible ? this.map : null));
   }
@@ -293,6 +304,9 @@ class MapManager {
     layerData.polygons.forEach(p => p.setMap(null));
     layerData.labels.forEach(l => l.setMap(null));
     this.layers.delete(layerId);
+    if (AppRegistry.has('clusterManager')) {
+      AppRegistry.get('clusterManager').removeLayer(layerId);
+    }
   }
 
   clearLayer(layerId) {
@@ -304,6 +318,9 @@ class MapManager {
     layerData.markers = [];
     layerData.polygons = [];
     layerData.labels = [];
+    if (AppRegistry.has('clusterManager')) {
+      AppRegistry.get('clusterManager').clearLayer(layerId);
+    }
   }
 
   fitBounds(layerIds) {

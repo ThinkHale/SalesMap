@@ -137,10 +137,31 @@ const UIRenderer = {
     return el;
   },
 
+  _expandedLayers: new Set(),
+
   _buildLayerElement(layer, layerManager, sm) {
     const isTarget = sm.get('targetLayerForNewFeature') === layer.id;
+    const isExpanded = this._expandedLayers.has(layer.id);
+    const features = layer.features || [];
 
-    const el = Utils.createElement('div', { className: `layer-item${isTarget ? ' draw-target' : ''}`, 'data-layer-id': layer.id });
+    const wrapper = Utils.createElement('div', { className: 'layer-item-wrapper', 'data-layer-id': layer.id });
+
+    const el = Utils.createElement('div', { className: `layer-item${isTarget ? ' draw-target' : ''}` });
+
+    // Expand/collapse arrow (only meaningful when there are features)
+    const expandBtn = Utils.createElement('button', {
+      className: `layer-expand-btn${isExpanded ? ' expanded' : ''}`,
+      title: isExpanded ? 'Collapse features' : 'Expand features'
+    }, isExpanded ? '▾' : '▸');
+    expandBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (this._expandedLayers.has(layer.id)) {
+        this._expandedLayers.delete(layer.id);
+      } else {
+        this._expandedLayers.add(layer.id);
+      }
+      this.renderLayerTree();
+    });
 
     const visBtn = Utils.createElement('button', { className: `layer-vis-btn ${layer.visible ? '' : 'hidden'}`, title: 'Toggle visibility' });
     visBtn.textContent = layer.visible ? '👁' : '🚫';
@@ -160,7 +181,7 @@ const UIRenderer = {
     const nameEl = Utils.createElement('div', { className: 'layer-name' });
     nameEl.textContent = layer.name;
     const meta = Utils.createElement('div', { className: 'layer-meta' });
-    meta.textContent = `${(layer.features || []).length} features · ${layer.type}`;
+    meta.textContent = `${features.length} features · ${layer.type}`;
     info.appendChild(nameEl);
     info.appendChild(meta);
 
@@ -170,17 +191,18 @@ const UIRenderer = {
       this._showLayerContextMenu(e, layer, layerManager, sm);
     });
 
+    el.appendChild(expandBtn);
     el.appendChild(visBtn);
     el.appendChild(colorSwatch);
     el.appendChild(info);
     el.appendChild(menuBtn);
 
-    // Click to fit bounds
+    // Click layer name area to fit bounds
     info.addEventListener('click', () => {
       layerManager.fitToLayer(layer.id);
     });
 
-    // Drag to reorder (simple implementation)
+    // Drag to reorder
     el.draggable = true;
     el.addEventListener('dragstart', (e) => {
       if (e.dataTransfer) {
@@ -207,7 +229,63 @@ const UIRenderer = {
       this._moveLayerBefore(draggedLayerId, layer.id);
     });
 
-    return el;
+    wrapper.appendChild(el);
+
+    // Feature list panel (shown when expanded)
+    if (isExpanded) {
+      wrapper.appendChild(this._buildFeatureList(layer, layerManager));
+    }
+
+    return wrapper;
+  },
+
+  _buildFeatureList(layer, layerManager) {
+    const container = Utils.createElement('div', { className: 'layer-features' });
+
+    const features = layer.features || [];
+    if (features.length === 0) {
+      const empty = Utils.createElement('div', { className: 'layer-features-empty' }, 'No features in this layer');
+      container.appendChild(empty);
+      return container;
+    }
+
+    features.forEach(feature => {
+      const row = Utils.createElement('div', { className: 'feature-row' });
+
+      const icon = Utils.createElement('span', { className: 'feature-row-icon' });
+      icon.textContent = feature.wkt ? '⬡' : '●';
+
+      const nameEl = Utils.createElement('span', { className: 'feature-row-name' });
+      nameEl.textContent = feature.name || feature.id || 'Untitled';
+      nameEl.title = feature.name || '';
+
+      const editBtn = Utils.createElement('button', { className: 'feature-row-btn', title: 'Edit feature' }, '✎');
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        drawerManager.open(
+          body => UIRenderer.renderFeatureInfo(feature, body, layer.id),
+          `Feature: ${feature.name || 'Untitled'}`
+        );
+      });
+
+      const deleteBtn = Utils.createElement('button', { className: 'feature-row-btn feature-row-btn-danger', title: 'Delete feature' }, '✕');
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (confirm(`Delete "${feature.name || 'this feature'}"?`)) {
+          const ch = AppRegistry.require('commandHistory');
+          ch.execute(new DeleteFeatureCommand(layerManager, layer.id, feature.id));
+          AppRegistry.require('syncController').scheduleSave();
+        }
+      });
+
+      row.appendChild(icon);
+      row.appendChild(nameEl);
+      row.appendChild(editBtn);
+      row.appendChild(deleteBtn);
+      container.appendChild(row);
+    });
+
+    return container;
   },
 
   _moveLayerBefore(draggedLayerId, targetLayerId) {

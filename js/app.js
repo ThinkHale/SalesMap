@@ -27,7 +27,7 @@ async function initMap() {
     const analyticsPanel = new AnalyticsPanel(layerManager, stateManager);
     AppRegistry.register('analyticsPanel', analyticsPanel);
 
-    const clusterManager = new ClusterManager(mapManager.map);
+    const clusterManager = new ClusterManager(mapManager.map, mapManager);
     AppRegistry.register('clusterManager', clusterManager);
 
     // Append clustering toggle to layers toolbar

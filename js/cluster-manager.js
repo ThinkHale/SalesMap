@@ -1,38 +1,57 @@
 // js/cluster-manager.js — ClusterManager
 
 class ClusterManager {
-  constructor(map) {
+  constructor(map, mapManager) {
     this._map = map;
+    this._mapManager = mapManager || null; // optional, used to check layer visibility
     this._clusterers = new Map(); // layerId → MarkerClusterer
+    this._markers = new Map();   // layerId → markers[] (source of truth for all markers)
     this._enabled = true;
   }
 
   addMarkersToCluster(layerId, markers) {
-    if (!this._enabled) return;
     if (!markers || markers.length === 0) return;
 
+    // Store markers as source of truth (allows re-show on disable)
+    if (!this._markers.has(layerId)) this._markers.set(layerId, []);
+    this._markers.get(layerId).push(...markers);
+
+    if (!this._enabled) {
+      // Clustering disabled — show markers directly on the map
+      markers.forEach(m => m.setMap(this._map));
+      return;
+    }
+
+    // Clustering enabled — hand off control to the clusterer
+    markers.forEach(m => m.setMap(null));
+    this._clusterMarkers(layerId, markers);
+  }
+
+  _clusterMarkers(layerId, markers) {
+    if (!markers || markers.length === 0) return;
     try {
-      if (typeof markerClusterer !== 'undefined' || (window.markerClusterer)) {
-        const MC = window.markerClusterer?.MarkerClusterer;
-        if (!MC) return;
-
-        if (!this._clusterers.has(layerId)) {
-          const clusterer = new MC({
-            map: this._map,
-            markers: [],
-            renderer: this._buildRenderer(),
-            algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 14, radius: 60 })
-          });
-          this._clusterers.set(layerId, clusterer);
-        }
-
-        const clusterer = this._clusterers.get(layerId);
-        clusterer.addMarkers(markers, true);
-        clusterer.render();
+      const MC = window.markerClusterer?.MarkerClusterer;
+      if (!MC) {
+        markers.forEach(m => m.setMap(this._map));
+        return;
       }
+
+      if (!this._clusterers.has(layerId)) {
+        const clusterer = new MC({
+          map: this._map,
+          markers: [],
+          renderer: this._buildRenderer(),
+          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 14, radius: 60 })
+        });
+        this._clusterers.set(layerId, clusterer);
+      }
+
+      const clusterer = this._clusterers.get(layerId);
+      clusterer.addMarkers(markers, true);
+      clusterer.render();
     } catch (e) {
-      // Cluster library not available or failed — markers already added directly to map
       console.warn('[ClusterManager] Clustering unavailable:', e.message);
+      markers.forEach(m => m.setMap(this._map));
     }
   }
 
@@ -45,6 +64,7 @@ class ClusterManager {
       } catch (e) { /* ignore */ }
       this._clusterers.delete(layerId);
     }
+    this._markers.delete(layerId);
   }
 
   clearLayer(layerId) {
@@ -54,10 +74,48 @@ class ClusterManager {
         clusterer.clearMarkers();
       } catch (e) { /* ignore */ }
     }
+    // Clear stored markers — new ones will be registered when the layer is re-rendered
+    this._markers.delete(layerId);
+  }
+
+  // Called by MapManager.toggleLayerVisibility to respect clustering state
+  setLayerVisible(layerId, visible) {
+    const markers = this._markers.get(layerId) || [];
+    if (!visible) {
+      const clusterer = this._clusterers.get(layerId);
+      if (clusterer) try { clusterer.clearMarkers(); } catch (e) {}
+      markers.forEach(m => m.setMap(null));
+    } else if (this._enabled) {
+      this._clusterMarkers(layerId, markers);
+    } else {
+      markers.forEach(m => m.setMap(this._map));
+    }
   }
 
   setEnabled(enabled) {
+    if (this._enabled === enabled) return;
     this._enabled = enabled;
+
+    if (!enabled) {
+      // Remove all cluster icons, show markers directly
+      this._clusterers.forEach(clusterer => {
+        try { clusterer.clearMarkers(); } catch (e) {}
+      });
+      this._markers.forEach((markers, layerId) => {
+        const layerData = this._mapManager?.getLayerData(layerId);
+        const visible = layerData ? layerData.visible : true;
+        markers.forEach(m => m.setMap(visible ? this._map : null));
+      });
+    } else {
+      // Re-cluster all visible layers
+      this._markers.forEach((markers, layerId) => {
+        const layerData = this._mapManager?.getLayerData(layerId);
+        const visible = layerData ? layerData.visible : true;
+        if (!visible) return;
+        markers.forEach(m => m.setMap(null));
+        this._clusterMarkers(layerId, markers);
+      });
+    }
   }
 
   _buildRenderer() {
@@ -93,10 +151,7 @@ class ClusterManager {
     const cb = Utils.createElement('input', { type: 'checkbox' });
     cb.checked = this._enabled;
     cb.addEventListener('change', () => {
-      this._enabled = cb.checked;
-      if (!this._enabled) {
-        this._clusterers.forEach((c, id) => c.clearMarkers());
-      }
+      this.setEnabled(cb.checked);
     });
     const lbl = document.createTextNode(' Enable marker clustering');
     toggle.appendChild(cb);

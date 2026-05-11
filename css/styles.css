@@ -37,6 +37,7 @@ html, body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  position: relative;
 }
 
 #sidebar {
@@ -242,6 +243,52 @@ html, body {
   flex-shrink: 0;
 }
 .layer-menu-btn:hover { color: #323130; background: #edebe9; }
+
+.layer-expand-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 11px; color: #a19f9d; padding: 0 2px;
+  flex-shrink: 0; transition: color 0.1s;
+  width: 14px; text-align: center;
+}
+.layer-expand-btn:hover { color: #323130; }
+.layer-expand-btn.expanded { color: #0078d4; }
+
+/* ── Feature list (expanded layer) ────────────────────────────────────────── */
+.layer-item-wrapper { margin-bottom: 2px; }
+
+.layer-features {
+  margin: 0 0 4px 22px;
+  border-left: 2px solid #edebe9;
+  padding-left: 6px;
+}
+.layer-features-empty {
+  font-size: 11px; color: #a19f9d; padding: 4px 6px; font-style: italic;
+}
+
+.feature-row {
+  display: flex; align-items: center; gap: 5px;
+  padding: 3px 4px; border-radius: 3px;
+  transition: background 0.1s;
+}
+.feature-row:hover { background: #f3f2f1; }
+
+.feature-row-icon {
+  font-size: 9px; color: #a19f9d; flex-shrink: 0; width: 12px; text-align: center;
+}
+.feature-row-name {
+  flex: 1; font-size: 12px; color: #323130;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  cursor: default;
+}
+.feature-row-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 12px; color: #a19f9d; padding: 1px 3px;
+  border-radius: 3px; flex-shrink: 0; opacity: 0;
+  transition: opacity 0.1s, color 0.1s, background 0.1s;
+}
+.feature-row:hover .feature-row-btn { opacity: 1; }
+.feature-row-btn:hover { color: #323130; background: #edebe9; }
+.feature-row-btn-danger:hover { color: #d13438; background: #fde7e9; }
 
 /* ── Layer Groups ─────────────────────────────────────────────────────────── */
 .layer-group { margin-bottom: 4px; }
