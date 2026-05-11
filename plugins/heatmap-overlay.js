@@ -124,11 +124,11 @@ const HeatmapOverlayPlugin = {
     const cfg = this._api.config.get();
     const gradient = this._gradients[cfg.gradient];
 
-    // When maxIntensity is left at auto (0), Google Maps sets it equal to the
-    // highest single-point weight in the viewport. With sparse data this means
-    // every isolated point renders at full red. Compute a baseline intensity
-    // proportional to the dataset size so density contrast is visible.
-    const autoMaxIntensity = Math.max(5, Math.ceil(points.length / 30));
+    // With auto maxIntensity (0), Google uses the highest single-point weight in
+    // the viewport, so every isolated point renders at full intensity. Cap it at a
+    // value that shows density contrast: use 3 for small datasets so points are
+    // visible, scaling up for larger datasets so dense clusters stand out more.
+    const autoMaxIntensity = points.length <= 50 ? 3 : Math.max(3, Math.ceil(points.length / 50));
 
     const options = {
       data: points,
@@ -167,10 +167,7 @@ const HeatmapOverlayPlugin = {
   _refresh() {
     if (!this._isActive || !this._heatmapLayer) return;
     const points = this._collectPoints();
-    const cfg = this._api.config.get();
-    const autoMaxIntensity = Math.max(5, Math.ceil(points.length / 30));
     this._heatmapLayer.setData(points);
-    this._heatmapLayer.set('maxIntensity', cfg.maxIntensity > 0 ? cfg.maxIntensity : autoMaxIntensity);
   },
 
   _collectPoints() {

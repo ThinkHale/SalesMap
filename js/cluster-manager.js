@@ -86,6 +86,8 @@ class ClusterManager {
       if (clusterer) try { clusterer.clearMarkers(); } catch (e) {}
       markers.forEach(m => m.setMap(null));
     } else if (this._enabled) {
+      const clusterer = this._clusterers.get(layerId);
+      if (clusterer) try { clusterer.clearMarkers(true); } catch (e) {}
       this._clusterMarkers(layerId, markers);
     } else {
       markers.forEach(m => m.setMap(this._map));
