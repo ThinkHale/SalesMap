@@ -78,9 +78,12 @@ const HeatmapOverlayPlugin = {
     api.events.on('features.added', () => { if (this._isActive) this._refresh(); });
     api.events.on('layer.visibility.changed', () => { if (this._isActive) this._refresh(); });
 
-    // Restore active state
+    // Restore active state after layers are loaded (plugin init fires before
+    // ProfileController loads data, so _activate() here would find 0 points).
     const wasActive = api.storage.get('heatmap_active');
-    if (wasActive) this._activate();
+    if (wasActive) {
+      api.events.once('features.added', () => this._activate());
+    }
   },
 
   onEnable() {

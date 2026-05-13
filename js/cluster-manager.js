@@ -3,26 +3,24 @@
 class ClusterManager {
   constructor(map, mapManager) {
     this._map = map;
-    this._mapManager = mapManager || null; // optional, used to check layer visibility
+    this._mapManager = mapManager || null;
     this._clusterers = new Map(); // layerId → MarkerClusterer
-    this._markers = new Map();   // layerId → markers[] (source of truth for all markers)
+    this._markers = new Map();   // layerId → markers[] (source of truth)
     this._enabled = true;
+    this._idleListener = null;
   }
 
   addMarkersToCluster(layerId, markers) {
     if (!markers || markers.length === 0) return;
 
-    // Store markers as source of truth (allows re-show on disable)
     if (!this._markers.has(layerId)) this._markers.set(layerId, []);
     this._markers.get(layerId).push(...markers);
 
     if (!this._enabled) {
-      // Clustering disabled — show markers directly on the map
-      markers.forEach(m => m.setMap(this._map));
+      this._showMarkersInViewport(markers);
       return;
     }
 
-    // Clustering enabled — hand off control to the clusterer
     markers.forEach(m => m.setMap(null));
     this._clusterMarkers(layerId, markers);
   }
@@ -41,7 +39,10 @@ class ClusterManager {
           map: this._map,
           markers: [],
           renderer: this._buildRenderer(),
-          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 14, radius: 60 })
+          // maxZoom:20 lets clusters dissolve gradually as you zoom in rather than
+          // all snapping to individual pins at once (which caused the "1 pin" appearance
+          // when many co-located markers were dumped onto the same pixel at zoom 15).
+          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 20, radius: 60 })
         });
         this._clusterers.set(layerId, clusterer);
       }
@@ -70,15 +71,11 @@ class ClusterManager {
   clearLayer(layerId) {
     const clusterer = this._clusterers.get(layerId);
     if (clusterer) {
-      try {
-        clusterer.clearMarkers();
-      } catch (e) { /* ignore */ }
+      try { clusterer.clearMarkers(); } catch (e) { /* ignore */ }
     }
-    // Clear stored markers — new ones will be registered when the layer is re-rendered
     this._markers.delete(layerId);
   }
 
-  // Called by MapManager.toggleLayerVisibility to respect clustering state
   setLayerVisible(layerId, visible) {
     const markers = this._markers.get(layerId) || [];
     if (!visible) {
@@ -90,7 +87,7 @@ class ClusterManager {
       if (clusterer) try { clusterer.clearMarkers(true); } catch (e) {}
       this._clusterMarkers(layerId, markers);
     } else {
-      markers.forEach(m => m.setMap(this._map));
+      this._showMarkersInViewport(markers);
     }
   }
 
@@ -99,17 +96,13 @@ class ClusterManager {
     this._enabled = enabled;
 
     if (!enabled) {
-      // Remove all cluster icons, show markers directly
       this._clusterers.forEach(clusterer => {
         try { clusterer.clearMarkers(); } catch (e) {}
       });
-      this._markers.forEach((markers, layerId) => {
-        const layerData = this._mapManager?.getLayerData(layerId);
-        const visible = layerData ? layerData.visible : true;
-        markers.forEach(m => m.setMap(visible ? this._map : null));
-      });
+      this._refreshUnclustered();
+      this._setupIdleListener();
     } else {
-      // Re-cluster all visible layers
+      this._removeIdleListener();
       this._markers.forEach((markers, layerId) => {
         const layerData = this._mapManager?.getLayerData(layerId);
         const visible = layerData ? layerData.visible : true;
@@ -119,6 +112,48 @@ class ClusterManager {
       });
     }
   }
+
+  // ── Viewport culling (unclustered mode) ────────────────────────────────────
+
+  _setupIdleListener() {
+    if (this._idleListener) return;
+    this._idleListener = google.maps.event.addListener(this._map, 'idle', () => {
+      if (!this._enabled) this._refreshUnclustered();
+    });
+  }
+
+  _removeIdleListener() {
+    if (this._idleListener) {
+      google.maps.event.removeListener(this._idleListener);
+      this._idleListener = null;
+    }
+  }
+
+  // Show only markers within the current map viewport to limit DOM element count.
+  _refreshUnclustered() {
+    const bounds = this._map.getBounds();
+    this._markers.forEach((markers, layerId) => {
+      const layerData = this._mapManager?.getLayerData(layerId);
+      const layerVisible = layerData ? layerData.visible : true;
+      markers.forEach(m => {
+        if (!layerVisible) { m.setMap(null); return; }
+        if (!bounds) { m.setMap(this._map); return; }
+        const pos = m.getPosition();
+        m.setMap(pos && bounds.contains(pos) ? this._map : null);
+      });
+    });
+  }
+
+  _showMarkersInViewport(markers) {
+    const bounds = this._map.getBounds();
+    markers.forEach(m => {
+      if (!bounds) { m.setMap(this._map); return; }
+      const pos = m.getPosition();
+      m.setMap(pos && bounds.contains(pos) ? this._map : null);
+    });
+  }
+
+  // ── Cluster icon renderer ──────────────────────────────────────────────────
 
   _buildRenderer() {
     return {
