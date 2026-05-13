@@ -271,6 +271,14 @@ class PluginManager {
         api.map.fitBounds = bounds => mm().map.fitBounds(bounds);
         api.map.addOverlay = overlay => overlay.setMap(mm().map);
         api.map.removeOverlay = overlay => overlay.setMap(null);
+        api.map.hideLayerMarkers = layerId => {
+          const cm = AppRegistry.get('clusterManager');
+          if (cm) cm.hideLayerForHeatmap(layerId);
+        };
+        api.map.showLayerMarkers = layerId => {
+          const cm = AppRegistry.get('clusterManager');
+          if (cm) cm.showLayerForHeatmap(layerId);
+        };
       }
     }
 

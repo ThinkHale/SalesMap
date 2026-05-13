@@ -23,13 +23,13 @@ const HeatmapOverlayPlugin = {
   configSchema: {
     gradient: {
       type: 'select',
-      options: ['fire', 'cool', 'ocean', 'default'],
+      options: ['fire', 'cool', 'ocean', 'purple', 'heat', 'default'],
       default: 'fire',
       label: 'Color Gradient'
     },
     radius: {
       type: 'number',
-      default: 40,
+      default: 30,
       min: 5,
       max: 120,
       label: 'Radius (px)'
@@ -43,10 +43,10 @@ const HeatmapOverlayPlugin = {
     },
     maxIntensity: {
       type: 'number',
-      default: 0,
-      min: 0,
-      max: 1000,
-      label: 'Max Intensity (0 = auto)'
+      default: 10,
+      min: 1,
+      max: 100,
+      label: 'Max Intensity'
     }
   },
 
@@ -54,23 +54,26 @@ const HeatmapOverlayPlugin = {
   _heatmapLayer: null,
   _isActive: false,
   _controlBtn: null,
+  _hiddenLayerIds: [],
 
   _gradients: {
-    fire: ['rgba(0,0,0,0)','rgba(255,160,0,1)','rgba(255,80,0,1)','rgba(255,0,0,1)'],
-    cool: ['rgba(0,0,0,0)','rgba(0,255,255,0.5)','rgba(0,0,255,1)'],
-    ocean: ['rgba(0,0,0,0)','rgba(0,200,255,0.5)','rgba(0,100,200,0.7)','rgba(0,0,100,1)'],
+    fire:    ['rgba(0,0,0,0)', 'rgba(255,0,0,0.6)', 'rgba(255,165,0,0.8)', 'rgba(255,255,0,1)'],
+    cool:    ['rgba(0,0,0,0)', 'rgba(0,0,255,0.4)', 'rgba(0,255,255,0.6)', 'rgba(0,255,0,0.8)', 'rgba(255,255,0,1)'],
+    ocean:   ['rgba(0,0,0,0)', 'rgba(0,0,139,0.4)', 'rgba(0,100,200,0.6)', 'rgba(0,191,255,0.8)', 'rgba(173,216,230,1)'],
+    purple:  ['rgba(0,0,0,0)', 'rgba(128,0,128,0.4)', 'rgba(255,0,255,0.6)', 'rgba(255,128,255,0.8)', 'rgba(255,255,255,1)'],
+    heat:    ['rgba(0,0,0,0)', 'rgba(0,0,255,0.3)', 'rgba(0,255,0,0.5)', 'rgba(255,255,0,0.7)', 'rgba(255,0,0,1)'],
     default: null
   },
 
   init(api) {
     this._api = api;
+    this._hiddenLayerIds = [];
 
-    // Migrate old default radius (20) to new default (40) for existing users.
-    if (api.config.get('radius') === 20) api.config.set('radius', 40);
+    // Migrate old default radius (20) to new default (30).
+    const savedRadius = api.config.get('radius');
+    if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 30);
 
-    // Pre-load the visualization library immediately so it is ready when the
-    // user clicks the button. With loading=async in the Maps API URL the library
-    // is not guaranteed to be available synchronously.
+    // Pre-load the visualization library so it's ready when the user clicks.
     if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
       google.maps.importLibrary('visualization').catch(() => {});
     }
@@ -88,9 +91,8 @@ const HeatmapOverlayPlugin = {
     api.events.on('features.added', () => { if (this._isActive) this._refresh(); });
     api.events.on('layer.visibility.changed', () => { if (this._isActive) this._refresh(); });
 
-    // Restore active state after layers are loaded.
-    // importLayers (Firebase path) emits 'layers.imported', not 'features.added',
-    // so we listen for both. A flag prevents double-activation.
+    // Restore active state after layers load.
+    // Firebase path emits 'layers.imported', CSV/manual path emits 'features.added'.
     const wasActive = api.storage.get('heatmap_active');
     if (wasActive) {
       let restored = false;
@@ -108,6 +110,7 @@ const HeatmapOverlayPlugin = {
     if (this._heatmapLayer) {
       this._heatmapLayer.setMap(null);
     }
+    this._showPointLayerMarkers();
   },
 
   destroy() {
@@ -115,6 +118,7 @@ const HeatmapOverlayPlugin = {
       this._heatmapLayer.setMap(null);
       this._heatmapLayer = null;
     }
+    this._showPointLayerMarkers();
   },
 
   _toggle() {
@@ -134,23 +138,19 @@ const HeatmapOverlayPlugin = {
 
     const points = this._collectPoints();
     if (points.length === 0) {
-      this._api.ui.toast.warning('No point data available for heatmap');
+      this._api.ui.toast.warning('No visible point data for heatmap');
       return;
     }
 
     const cfg = this._api.config.get();
     const gradient = this._gradients[cfg.gradient];
 
-    // maxIntensity=3: isolated points render at ~33% gradient (visible orange),
-    // areas with 3+ overlapping points within the radius reach full red.
-    // The user can override via plugin settings if they want finer control.
-    const autoMaxIntensity = 3;
-
     const options = {
       data: points,
-      radius: cfg.radius || 20,
+      radius: cfg.radius || 30,
       opacity: cfg.opacity || 0.7,
-      maxIntensity: cfg.maxIntensity > 0 ? cfg.maxIntensity : autoMaxIntensity
+      maxIntensity: cfg.maxIntensity > 0 ? cfg.maxIntensity : 10,
+      dissipating: true
     };
     if (gradient) options.gradient = gradient;
 
@@ -164,14 +164,13 @@ const HeatmapOverlayPlugin = {
       this._isActive = true;
       this._api.storage.set('heatmap_active', true);
       if (this._controlBtn) this._controlBtn.classList.add('active');
+      this._hidePointLayerMarkers();
       this._api.ui.toast.success(`Heatmap active (${points.length} points)`);
     };
 
     if (typeof google !== 'undefined' && google.maps.visualization?.HeatmapLayer) {
-      // Library already loaded (normal path)
       doRender();
     } else if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
-      // loading=async deferred the visualization library — import it now
       google.maps.importLibrary('visualization')
         .then(() => doRender())
         .catch(() => this._api.ui.toast.error('Heatmap visualization library not loaded'));
@@ -187,35 +186,64 @@ const HeatmapOverlayPlugin = {
     this._isActive = false;
     this._api.storage.set('heatmap_active', false);
     if (this._controlBtn) this._controlBtn.classList.remove('active');
+    this._showPointLayerMarkers();
     this._api.ui.toast.info('Heatmap disabled');
   },
 
   _refresh() {
     if (!this._isActive || !this._heatmapLayer) return;
     const points = this._collectPoints();
+    const cfg = this._api.config.get();
+    const gradient = this._gradients[cfg.gradient];
+
     this._heatmapLayer.setData(points);
+    this._heatmapLayer.setOptions({
+      radius: cfg.radius || 30,
+      opacity: cfg.opacity || 0.7,
+      maxIntensity: cfg.maxIntensity > 0 ? cfg.maxIntensity : 10,
+      dissipating: true,
+      gradient: gradient || undefined
+    });
+
+    // Re-apply marker hiding in case visibility changed
+    this._showPointLayerMarkers();
+    this._hidePointLayerMarkers();
   },
 
+  // Collect points only from visible layers — heatmap reflects what is shown.
   _collectPoints() {
     const layers = this._api.layers.getAll();
     const points = [];
     layers.forEach(layer => {
-      // Deliberately ignore layer.visible — the heatmap is an independent
-      // visualization. Users hide markers to reduce clutter while keeping
-      // the density overlay visible.
+      if (!layer.visible) return;
       if (layer.type === 'polygon') return;
       (layer.features || []).forEach(feature => {
         const lat = parseFloat(feature.latitude);
         const lng = parseFloat(feature.longitude);
         if (!isNaN(lat) && !isNaN(lng)) {
-          points.push({
-            location: new google.maps.LatLng(lat, lng),
-            weight: 1
-          });
+          points.push({ location: new google.maps.LatLng(lat, lng), weight: 1 });
         }
       });
     });
     return points;
+  },
+
+  // Hide markers for all visible point layers so the heatmap is unobstructed.
+  _hidePointLayerMarkers() {
+    const layers = this._api.layers.getAll();
+    this._hiddenLayerIds = [];
+    layers.forEach(layer => {
+      if (!layer.visible || layer.type === 'polygon') return;
+      this._api.map.hideLayerMarkers(layer.id);
+      this._hiddenLayerIds.push(layer.id);
+    });
+  },
+
+  _showPointLayerMarkers() {
+    (this._hiddenLayerIds || []).forEach(layerId => {
+      this._api.map.showLayerMarkers(layerId);
+    });
+    this._hiddenLayerIds = [];
   }
 };
 

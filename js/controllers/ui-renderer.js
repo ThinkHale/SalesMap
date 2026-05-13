@@ -405,10 +405,21 @@ const UIRenderer = {
   _exportLayer(layer) {
     const features = layer.features || [];
     if (features.length === 0) { toastManager.warning('No features to export'); return; }
-    const headers = ['id', 'name', 'latitude', 'longitude', 'wkt', 'tier', 'bdm', 'revenue', 'description'];
-    const rows = [headers.join(',')];
+
+    // Build headers from all keys present across every feature so custom CSV
+    // columns imported from the file are preserved in the export.
+    const systemFirst = ['id', 'name', 'latitude', 'longitude', 'wkt', 'tier', 'bdm', 'revenue', 'description'];
+    const extraKeys = new Set();
     features.forEach(f => {
-      rows.push(headers.map(h => `"${String(f[h] || '').replace(/"/g, '""')}"`).join(','));
+      Object.keys(f).forEach(k => {
+        if (!systemFirst.includes(k) && !k.startsWith('_')) extraKeys.add(k);
+      });
+    });
+    const headers = [...systemFirst, ...extraKeys];
+
+    const rows = [headers.map(h => `"${h}"`).join(',')];
+    features.forEach(f => {
+      rows.push(headers.map(h => `"${String(f[h] !== null && f[h] !== undefined ? f[h] : '').replace(/"/g, '""')}"`).join(','));
     });
     const blob = new Blob([rows.join('\n')], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);

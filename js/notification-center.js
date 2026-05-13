@@ -17,8 +17,13 @@ class NotificationCenter {
       this.addNotification('error', 'Sync Error', `Firebase sync failed: ${data?.message || 'Unknown error'}`);
     });
 
-    eventBus.on('layers.imported', (data) => {
-      this.addNotification('info', 'Map Updated', `Received update from another user (${data.layerCount} layers)`);
+    // Only notify on genuine remote updates, not the initial profile load.
+    // SyncController emits layers.updated{source:'realtime'} for remote changes;
+    // layers.imported fires for both initial load and remote imports.
+    eventBus.on('layers.updated', (data) => {
+      if (data.source === 'realtime') {
+        this.addNotification('info', 'Map Updated', 'Another user updated the map');
+      }
     });
 
     eventBus.on('plugin.initialized', (data) => {

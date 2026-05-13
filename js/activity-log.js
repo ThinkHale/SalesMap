@@ -90,7 +90,9 @@ class ActivityLog {
     if (!this._container) this._container = document.getElementById('activityList');
     if (!this._container) return;
     this._container.innerHTML = '';
-    this._entries.slice(0, 100).forEach(entry => this._prependEntry(entry));
+    // _entries is newest-first; prepending in that order produces oldest-at-top.
+    // Reverse so we prepend oldest first → newest ends up at top of the list.
+    this._entries.slice(0, 100).reverse().forEach(entry => this._prependEntry(entry));
   }
 
   exportJSON() {

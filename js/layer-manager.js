@@ -163,9 +163,10 @@ class LayerManager {
     const feature = layer.features.find(f => f.id === featureId);
     if (!feature) return;
     Object.assign(feature, properties);
-    // Re-render
+    // Re-render then restore visual state (visibility + property style)
     this._mapManager.clearLayer(layerId);
     this._mapManager.addFeaturesToLayer(layerId, layer.features, layer.type, layer.color);
+    this._restoreLayerState(layer);
     eventBus.emit('feature.updated', { layerId, featureId, properties });
   }
 
@@ -175,9 +176,10 @@ class LayerManager {
     const idx = layer.features.findIndex(f => f.id === featureId);
     if (idx === -1) return;
     const [feature] = layer.features.splice(idx, 1);
-    // Re-render
+    // Re-render then restore visual state
     this._mapManager.clearLayer(layerId);
     this._mapManager.addFeaturesToLayer(layerId, layer.features, layer.type, layer.color);
+    this._restoreLayerState(layer);
     eventBus.emit('feature.deleted', { layerId, featureId, feature });
   }
 
@@ -191,12 +193,25 @@ class LayerManager {
     const [feature] = srcLayer.features.splice(idx, 1);
     tgtLayer.features.push(feature);
 
-    // Re-render both layers
+    // Re-render both layers then restore visual state for each
     this._mapManager.clearLayer(sourceLayerId);
     this._mapManager.addFeaturesToLayer(sourceLayerId, srcLayer.features, srcLayer.type, srcLayer.color);
+    this._restoreLayerState(srcLayer);
     this._mapManager.addFeaturesToLayer(targetLayerId, [feature], tgtLayer.type, tgtLayer.color);
+    this._restoreLayerState(tgtLayer);
 
     eventBus.emit('feature.moved', { sourceLayerId, targetLayerId, featureId, feature });
+  }
+
+  // After a full layer re-render (clearLayer + addFeaturesToLayer), re-apply visibility
+  // and property-based styling so the layer's logical state matches what's on the map.
+  _restoreLayerState(layer) {
+    if (!layer.visible) {
+      this._mapManager.toggleLayerVisibility(layer.id, false);
+    }
+    if (layer.styleType === 'property' && layer.styleProperty) {
+      this._mapManager.applyPropertyBasedStyle(layer.id, layer.styleProperty);
+    }
   }
 
   getFeature(layerId, featureId) {

@@ -198,11 +198,11 @@ function setupDOMEventListeners() {
   // ── Drawing tools ──
   document.getElementById('drawPointBtn')?.addEventListener('click', () => {
     DrawingController.startDrawing('point');
-    document.getElementById('cancelDrawBtn').style.display = '';
+    document.getElementById('cancelDrawBtn')?.style && (document.getElementById('cancelDrawBtn').style.display = '');
   });
   document.getElementById('drawPolygonBtn')?.addEventListener('click', () => {
     DrawingController.startDrawing('polygon');
-    document.getElementById('cancelDrawBtn').style.display = '';
+    document.getElementById('cancelDrawBtn')?.style && (document.getElementById('cancelDrawBtn').style.display = '');
   });
   document.getElementById('cancelDrawBtn')?.addEventListener('click', () => {
     DrawingController.cancelDrawing();
@@ -211,7 +211,8 @@ function setupDOMEventListeners() {
 
   // Hide cancel button when drawing completes or is cancelled via Escape
   eventBus.on('feature.created', () => {
-    document.getElementById('cancelDrawBtn').style.display = 'none';
+    const btn = document.getElementById('cancelDrawBtn');
+    if (btn) btn.style.display = 'none';
   });
 
   // ── Distance/Measure tool ──
@@ -285,8 +286,12 @@ function setupDOMEventListeners() {
       try {
         const result = await AppRegistry.require('geocodingService').searchAddress(query);
         const mm = AppRegistry.require('mapManager');
-        mm.setCenter(result.lat, result.lng, 13);
         mm.addSearchMarker(result.lat, result.lng, result.formattedAddress);
+        if (result.bounds) {
+          mm.map.fitBounds(result.bounds);
+        } else {
+          mm.setCenter(result.lat, result.lng, 13);
+        }
       } catch (e) {
         toastManager.error('Address not found');
       }
