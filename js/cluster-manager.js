@@ -40,10 +40,10 @@ class ClusterManager {
           map: this._map,
           markers: [],
           renderer: this._buildRenderer(),
-          // maxZoom:20 lets clusters dissolve gradually as you zoom in rather than
-          // all snapping to individual pins at once (which caused the "1 pin" appearance
-          // when many co-located markers were dumped onto the same pixel at zoom 15).
-          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 20, radius: 60 })
+          // maxZoom:16 — clusters dissolve at zoom 17, which is street level and
+          // reachable on Google Maps. Beyond that each marker shows individually.
+          // radius:80 at city zoom reduces the number of small clusters visible.
+          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 16, radius: 80 })
         });
         this._clusterers.set(layerId, clusterer);
       }
@@ -130,8 +130,14 @@ class ClusterManager {
 
   _setupIdleListener() {
     if (this._idleListener) return;
-    this._idleListener = google.maps.event.addListener(this._map, 'idle', () => {
-      if (!this._enabled) this._refreshUnclustered();
+    // bounds_changed fires during pan/zoom; debounce to 100ms so we cull
+    // off-screen markers quickly without triggering on every animation frame.
+    let _cullingTimer;
+    this._idleListener = google.maps.event.addListener(this._map, 'bounds_changed', () => {
+      if (!this._enabled) {
+        clearTimeout(_cullingTimer);
+        _cullingTimer = setTimeout(() => this._refreshUnclustered(), 100);
+      }
     });
   }
 

@@ -29,9 +29,9 @@ const HeatmapOverlayPlugin = {
     },
     radius: {
       type: 'number',
-      default: 20,
+      default: 40,
       min: 5,
-      max: 80,
+      max: 120,
       label: 'Radius (px)'
     },
     opacity: {
@@ -64,6 +64,9 @@ const HeatmapOverlayPlugin = {
 
   init(api) {
     this._api = api;
+
+    // Migrate old default radius (20) to new default (40) for existing users.
+    if (api.config.get('radius') === 20) api.config.set('radius', 40);
 
     // Pre-load the visualization library immediately so it is ready when the
     // user clicks the button. With loading=async in the Maps API URL the library
@@ -197,7 +200,9 @@ const HeatmapOverlayPlugin = {
     const layers = this._api.layers.getAll();
     const points = [];
     layers.forEach(layer => {
-      if (!layer.visible) return;
+      // Deliberately ignore layer.visible — the heatmap is an independent
+      // visualization. Users hide markers to reduce clutter while keeping
+      // the density overlay visible.
       if (layer.type === 'polygon') return;
       (layer.features || []).forEach(feature => {
         const lat = parseFloat(feature.latitude);
