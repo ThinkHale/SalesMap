@@ -40,10 +40,10 @@ class ClusterManager {
           map: this._map,
           markers: [],
           renderer: this._buildRenderer(),
-          // maxZoom:16 — clusters dissolve at zoom 17, which is street level and
-          // reachable on Google Maps. Beyond that each marker shows individually.
-          // radius:80 at city zoom reduces the number of small clusters visible.
-          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 16, radius: 80 })
+          // maxZoom:20 — clusters dissolve gradually all the way to zoom 20
+          // (building level). Only markers within ~10m of each other still group
+          // at max zoom, giving the most granular decluster behavior possible.
+          algorithm: new markerClusterer.SuperClusterAlgorithm({ maxZoom: 20, radius: 60 })
         });
         this._clusterers.set(layerId, clusterer);
       }

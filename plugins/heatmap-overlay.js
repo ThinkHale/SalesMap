@@ -208,10 +208,9 @@ const HeatmapOverlayPlugin = {
         const lat = parseFloat(feature.latitude);
         const lng = parseFloat(feature.longitude);
         if (!isNaN(lat) && !isNaN(lng)) {
-          const weight = feature.revenue ? Math.log1p(parseFloat(feature.revenue) || 1) : 1;
           points.push({
             location: new google.maps.LatLng(lat, lng),
-            weight
+            weight: 1
           });
         }
       });
