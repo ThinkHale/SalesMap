@@ -1,6 +1,6 @@
 // sw.js — Service Worker for offline-first caching
 
-const CACHE_NAME = 'salesmap-v5';
+const CACHE_NAME = 'salesmap-v6';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -49,9 +49,15 @@ self.addEventListener('install', event => {
 
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    )
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+      .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+      .then(clients => {
+        // Tell every open tab to reload so it gets the fresh code immediately.
+        clients.forEach(client => {
+          try { client.navigate(client.url); } catch (e) {}
+        });
+      })
   );
   self.clients.claim();
 });
@@ -71,7 +77,24 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Cache-first for local static assets
+  // Network-first for JS and CSS so code changes are always picked up immediately.
+  // Cache is used only as offline fallback.
+  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+    event.respondWith(
+      fetch(event.request)
+        .then(response => {
+          if (response && response.status === 200 && response.type === 'basic') {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
+          return response;
+        })
+        .catch(() => caches.match(event.request))
+    );
+    return;
+  }
+
+  // Cache-first for HTML and other static assets
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;

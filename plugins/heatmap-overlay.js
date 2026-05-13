@@ -65,6 +65,13 @@ const HeatmapOverlayPlugin = {
   init(api) {
     this._api = api;
 
+    // Pre-load the visualization library immediately so it is ready when the
+    // user clicks the button. With loading=async in the Maps API URL the library
+    // is not guaranteed to be available synchronously.
+    if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
+      google.maps.importLibrary('visualization').catch(() => {});
+    }
+
     // Add toolbar button
     this._controlBtn = api.ui.addToolbarButton({
       label: '🌡',
@@ -78,11 +85,15 @@ const HeatmapOverlayPlugin = {
     api.events.on('features.added', () => { if (this._isActive) this._refresh(); });
     api.events.on('layer.visibility.changed', () => { if (this._isActive) this._refresh(); });
 
-    // Restore active state after layers are loaded (plugin init fires before
-    // ProfileController loads data, so _activate() here would find 0 points).
+    // Restore active state after layers are loaded.
+    // importLayers (Firebase path) emits 'layers.imported', not 'features.added',
+    // so we listen for both. A flag prevents double-activation.
     const wasActive = api.storage.get('heatmap_active');
     if (wasActive) {
-      api.events.once('features.added', () => this._activate());
+      let restored = false;
+      const tryRestore = () => { if (!restored) { restored = true; this._activate(); } };
+      api.events.once('features.added', tryRestore);
+      api.events.once('layers.imported', tryRestore);
     }
   },
 
