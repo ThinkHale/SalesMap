@@ -127,11 +127,10 @@ const HeatmapOverlayPlugin = {
     const cfg = this._api.config.get();
     const gradient = this._gradients[cfg.gradient];
 
-    // With auto maxIntensity (0), Google uses the highest single-point weight in
-    // the viewport, so every isolated point renders at full intensity. Cap it at a
-    // value that shows density contrast: use 3 for small datasets so points are
-    // visible, scaling up for larger datasets so dense clusters stand out more.
-    const autoMaxIntensity = points.length <= 50 ? 3 : Math.max(3, Math.ceil(points.length / 50));
+    // maxIntensity=3: isolated points render at ~33% gradient (visible orange),
+    // areas with 3+ overlapping points within the radius reach full red.
+    // The user can override via plugin settings if they want finer control.
+    const autoMaxIntensity = 3;
 
     const options = {
       data: points,
@@ -145,13 +144,23 @@ const HeatmapOverlayPlugin = {
       this._heatmapLayer.setMap(null);
     }
 
-    if (typeof google !== 'undefined' && google.maps.visualization && google.maps.visualization.HeatmapLayer) {
+    const doRender = () => {
       this._heatmapLayer = new google.maps.visualization.HeatmapLayer(options);
       this._heatmapLayer.setMap(map);
       this._isActive = true;
       this._api.storage.set('heatmap_active', true);
       if (this._controlBtn) this._controlBtn.classList.add('active');
       this._api.ui.toast.success(`Heatmap active (${points.length} points)`);
+    };
+
+    if (typeof google !== 'undefined' && google.maps.visualization?.HeatmapLayer) {
+      // Library already loaded (normal path)
+      doRender();
+    } else if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
+      // loading=async deferred the visualization library — import it now
+      google.maps.importLibrary('visualization')
+        .then(() => doRender())
+        .catch(() => this._api.ui.toast.error('Heatmap visualization library not loaded'));
     } else {
       this._api.ui.toast.error('Heatmap visualization library not loaded');
     }

@@ -8,6 +8,7 @@ class ClusterManager {
     this._markers = new Map();   // layerId → markers[] (source of truth)
     this._enabled = true;
     this._idleListener = null;
+    this._renderTimer = undefined;
   }
 
   addMarkersToCluster(layerId, markers) {
@@ -48,12 +49,24 @@ class ClusterManager {
       }
 
       const clusterer = this._clusterers.get(layerId);
-      clusterer.addMarkers(markers, true);
-      clusterer.render();
+      clusterer.addMarkers(markers, true); // noDraw — batch render via _scheduleRender
+      this._scheduleRender();
     } catch (e) {
       console.warn('[ClusterManager] Clustering unavailable:', e.message);
       markers.forEach(m => m.setMap(this._map));
     }
+  }
+
+  // Debounce all render() calls so bulk marker adds (CSV import, layer load)
+  // produce a single render instead of one per marker (was O(n²) before).
+  _scheduleRender() {
+    if (this._renderTimer !== undefined) clearTimeout(this._renderTimer);
+    this._renderTimer = setTimeout(() => {
+      this._renderTimer = undefined;
+      this._clusterers.forEach(clusterer => {
+        try { clusterer.render(); } catch (e) {}
+      });
+    }, 0);
   }
 
   removeLayer(layerId) {
