@@ -6,6 +6,7 @@ class ClusterManager {
     this._mapManager = mapManager || null;
     this._clusterers = new Map(); // layerId → MarkerClusterer
     this._markers = new Map();   // layerId → markers[] (source of truth)
+    this._clusteredSets = new Map(); // layerId → Set of marker objects currently in clusterer
     this._enabled = true;
     this._idleListener = null;
     this._renderTimer = undefined;
@@ -65,8 +66,8 @@ class ClusterManager {
 
       if (!this._clusterers.has(layerId)) {
         const algorithm = window.markerClusterer?.GridAlgorithm
-          ? new markerClusterer.GridAlgorithm({ gridSize: this._settings.gridSize, maxZoom: this._settings.maxZoom })
-          : new markerClusterer.SuperClusterAlgorithm({ maxZoom: this._settings.maxZoom, radius: this._settings.gridSize });
+          ? new markerClusterer.GridAlgorithm({ gridSize: this._settings.gridSize, maxZoom: this._settings.maxZoom, minClusterSize: this._settings.minClusterSize })
+          : new markerClusterer.SuperClusterAlgorithm({ maxZoom: this._settings.maxZoom, radius: this._settings.gridSize, minPoints: this._settings.minClusterSize });
 
         const clusterer = new MC({
           map: this._map,
@@ -76,15 +77,35 @@ class ClusterManager {
           onClusterClick: (event, cluster) => this._handleClusterClick(event, cluster)
         });
         this._clusterers.set(layerId, clusterer);
+        this._clusteredSets.set(layerId, new Set());
       }
 
       const clusterer = this._clusterers.get(layerId);
-      clusterer.addMarkers(markers, true); // noDraw — batch render via _scheduleRender
+      const tracked = this._clusteredSets.get(layerId);
+
+      // Deduplicate: only add markers not already tracked in this clusterer
+      const toAdd = markers.filter(m => !tracked.has(m));
+      if (toAdd.length === 0) return;
+
+      toAdd.forEach(m => tracked.add(m));
+      clusterer.addMarkers(toAdd, true); // noDraw — batch render via _scheduleRender
       this._scheduleRender();
     } catch (e) {
       console.warn('[ClusterManager] Clustering unavailable:', e.message);
       markers.forEach(m => m.setMap(this._map));
     }
+  }
+
+  // Fully tears down and recreates the clusterer for a layer, ensuring no stale
+  // marker counts survive visibility toggles or heatmap show/hide cycles.
+  _rebuildClusterer(layerId, markers) {
+    const old = this._clusterers.get(layerId);
+    if (old) {
+      try { old.clearMarkers(); old.setMap(null); } catch (e) {}
+      this._clusterers.delete(layerId);
+    }
+    this._clusteredSets.delete(layerId);
+    this._clusterMarkers(layerId, markers);
   }
 
   // Debounce all render() calls so bulk marker adds produce a single render.
@@ -187,6 +208,7 @@ class ClusterManager {
       } catch (e) { /* ignore */ }
       this._clusterers.delete(layerId);
     }
+    this._clusteredSets.delete(layerId);
     this._markers.delete(layerId);
   }
 
@@ -195,6 +217,7 @@ class ClusterManager {
     if (clusterer) {
       try { clusterer.clearMarkers(); } catch (e) { /* ignore */ }
     }
+    this._clusteredSets.delete(layerId);
     this._markers.delete(layerId);
   }
 
@@ -203,11 +226,10 @@ class ClusterManager {
     if (!visible) {
       const clusterer = this._clusterers.get(layerId);
       if (clusterer) try { clusterer.clearMarkers(); } catch (e) {}
+      this._clusteredSets.delete(layerId);
       markers.forEach(m => m.setMap(null));
     } else if (this._enabled) {
-      const clusterer = this._clusterers.get(layerId);
-      if (clusterer) try { clusterer.clearMarkers(true); } catch (e) {}
-      this._clusterMarkers(layerId, markers);
+      this._rebuildClusterer(layerId, markers);
     } else {
       this._showMarkersInViewport(markers);
     }
@@ -217,6 +239,7 @@ class ClusterManager {
   hideLayerForHeatmap(layerId) {
     const clusterer = this._clusterers.get(layerId);
     if (clusterer) try { clusterer.clearMarkers(); } catch (e) {}
+    this._clusteredSets.delete(layerId);
     (this._markers.get(layerId) || []).forEach(m => m.setMap(null));
   }
 
@@ -226,9 +249,7 @@ class ClusterManager {
     if (!visible) return;
     const markers = this._markers.get(layerId) || [];
     if (this._enabled) {
-      const clusterer = this._clusterers.get(layerId);
-      if (clusterer) try { clusterer.clearMarkers(true); } catch (e) {}
-      this._clusterMarkers(layerId, markers);
+      this._rebuildClusterer(layerId, markers);
     } else {
       this._showMarkersInViewport(markers);
     }
@@ -244,6 +265,7 @@ class ClusterManager {
       this._clusterers.forEach(clusterer => {
         try { clusterer.clearMarkers(); } catch (e) {}
       });
+      this._clusteredSets.clear();
       this._refreshUnclustered();
       this._setupIdleListener();
     } else {
@@ -253,7 +275,7 @@ class ClusterManager {
         const visible = layerData ? layerData.visible : true;
         if (!visible) return;
         markers.forEach(m => m.setMap(null));
-        this._clusterMarkers(layerId, markers);
+        this._rebuildClusterer(layerId, markers);
       });
     }
   }
