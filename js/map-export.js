@@ -23,7 +23,34 @@ const MapExport = {
     })));
 
     const safeLayerData = encodeURIComponent(layerData);
-    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom);
+
+    let heatmapData = null;
+    if (AppRegistry.has('pluginRegistry')) {
+      const pluginDef = AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay');
+      if (pluginDef && pluginDef._isActive && pluginDef._api) {
+        const cfg = pluginDef._api.config.get();
+        const points = [];
+        layers.forEach(layer => {
+          if (!layer.visible || layer.type === 'polygon') return;
+          (layer.features || []).forEach(feature => {
+            const lat = parseFloat(feature.latitude);
+            const lng = parseFloat(feature.longitude);
+            if (!isNaN(lat) && !isNaN(lng)) points.push([lat, lng, 1]);
+          });
+        });
+        if (points.length > 0) {
+          heatmapData = {
+            points,
+            gradient: cfg.gradient || 'fire',
+            radius: cfg.radius || 30,
+            opacity: cfg.opacity || 0.7,
+            maxIntensity: cfg.maxIntensity || 10
+          };
+        }
+      }
+    }
+
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -37,9 +64,30 @@ const MapExport = {
     toastManager.success('Map exported successfully');
   },
 
-  _buildExportHTML(layerDataJSON, center, zoom) {
+  _buildExportHTML(layerDataJSON, center, zoom, heatmapData) {
     const title = Utils.escapeHtml('SalesMap Export — ' + new Date().toLocaleDateString());
     const pinPath = AppConfig.marker.pinPath;
+    const heatScript = heatmapData
+      ? '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>'
+      : '';
+    const heatInit = heatmapData ? `
+var HEATMAP_GRADIENTS = {
+  fire:    { 0.33: '#f00', 0.67: '#ffa500', 1.0: '#ff0' },
+  cool:    { 0.25: '#00f', 0.5: '#0ff', 0.75: '#0f0', 1.0: '#ff0' },
+  ocean:   { 0.25: '#00008b', 0.5: '#0064c8', 0.75: '#00bfff', 1.0: '#add8e6' },
+  purple:  { 0.25: '#800080', 0.5: '#f0f', 0.75: '#ff80ff', 1.0: '#fff' },
+  heat:    { 0.25: '#00f', 0.5: '#0f0', 0.75: '#ff0', 1.0: '#f00' }
+};
+var heatOpts = {
+  radius: ${heatmapData.radius},
+  max: ${heatmapData.maxIntensity},
+  minOpacity: ${Math.max(0.05, heatmapData.opacity - 0.3)},
+  blur: 15
+};
+var grad = HEATMAP_GRADIENTS[${JSON.stringify(heatmapData.gradient)}];
+if (grad) heatOpts.gradient = grad;
+L.heatLayer(${JSON.stringify(heatmapData.points)}, heatOpts).addTo(map);
+` : '';
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -77,10 +125,12 @@ const MapExport = {
 <div id="map"></div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"></script>
+${heatScript}
 <script>
 const LAYER_DATA = JSON.parse(decodeURIComponent("${layerDataJSON}"));
 const TIER_COLORS = ${JSON.stringify(AppConfig.colors.tierMap)};
 const PIN_PATH = ${JSON.stringify(pinPath)};
+const HEATMAP_MODE = ${heatmapData ? 'true' : 'false'};
 
 const map = L.map('map').setView([${center.lat}, ${center.lng}], ${zoom});
 
@@ -149,7 +199,7 @@ LAYER_DATA.forEach(function(layer) {
           }).bindPopup(makePopupContent(feature)).addTo(map);
         }
       } catch(e) {}
-    } else if (feature.latitude && feature.longitude) {
+    } else if (!HEATMAP_MODE && feature.latitude && feature.longitude) {
       var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
       var color = tierColor || layer.color || '#0078d4';
       L.marker(
@@ -159,6 +209,7 @@ LAYER_DATA.forEach(function(layer) {
     }
   });
 });
+${heatInit}
 </script>
 </body>
 </html>`;
