@@ -112,10 +112,5 @@ const AppConfig = Object.freeze({
     vertexScale: 4
   }),
 
-  supabase: Object.freeze({
-    url: 'https://rpfoqfjtaijduflbgvtr.supabase.co',
-    anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJwZm9xZmp0YWlqZHVmbGJndnRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMzA1OTcsImV4cCI6MjA5MDkwNjU5N30.56syj7vnm8HpMF1hdk3ybEg6TDwJmhrZ9G2G3TUa8zE'
-  }),
-
   appVersion: '4.0.0'
 });

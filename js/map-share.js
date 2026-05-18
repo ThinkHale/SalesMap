@@ -24,25 +24,13 @@ const MapShare = {
       })),
       tierColors: AppConfig.colors.tierMap,
       pinPath: AppConfig.marker.pinPath,
-      exportedAt: new Date().toISOString()
+      createdAt: new Date().toISOString()
     };
 
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    await firebase.database().ref('salesTerritoryData/mapShares/' + id).set(snapshot);
 
-    const res = await fetch(`${AppConfig.supabase.url}/rest/v1/map_snapshots`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': AppConfig.supabase.anonKey,
-        'Authorization': `Bearer ${AppConfig.supabase.anonKey}`,
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify({ id, data: snapshot })
-    });
-
-    if (!res.ok) throw new Error(`Failed to save snapshot (${res.status})`);
-
-    return `${window.location.origin}/share.html?id=${id}`;
+    return window.location.origin + '/share.html?id=' + id;
   },
 
   showShareDialog(url) {
