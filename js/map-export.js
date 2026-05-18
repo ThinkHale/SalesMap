@@ -86,17 +86,17 @@ const MapExport = {
     const pinPath = AppConfig.marker.pinPath;
 
     const leafletCSSTag = assets.leafletCSS
-      ? `<style>${assets.leafletCSS}</style>`
+      ? `<style>${assets.leafletCSS.replace(/<\/style>/gi, '<\\/style>')}</style>`
       : '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>';
     const leafletJSTag = assets.leafletJS
-      ? `<script>${assets.leafletJS}<\/script>`
+      ? `<script>${assets.leafletJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
       : '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>';
     const wellknownJSTag = assets.wellknownJS
-      ? `<script>${assets.wellknownJS}<\/script>`
+      ? `<script>${assets.wellknownJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
       : '<script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"><\/script>';
     const heatScript = heatmapData
       ? (assets.leafletHeatJS
-          ? `<script>${assets.leafletHeatJS}<\/script>`
+          ? `<script>${assets.leafletHeatJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
           : '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>')
       : '';
     const heatInit = heatmapData ? `
