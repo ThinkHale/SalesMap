@@ -11,6 +11,32 @@ const MapShare = {
       : { lat: AppConfig.map.defaultCenter.lat, lng: AppConfig.map.defaultCenter.lng };
     const zoom = mapManager ? mapManager.map.getZoom() : AppConfig.map.defaultZoom;
 
+    let heatmap = null;
+    if (AppRegistry.has('pluginRegistry')) {
+      const pluginDef = AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay');
+      if (pluginDef && pluginDef._isActive && pluginDef._api) {
+        const cfg = pluginDef._api.config.get();
+        const points = [];
+        layers.forEach(layer => {
+          if (!layer.visible || layer.type === 'polygon') return;
+          (layer.features || []).forEach(feature => {
+            const lat = parseFloat(feature.latitude);
+            const lng = parseFloat(feature.longitude);
+            if (!isNaN(lat) && !isNaN(lng)) points.push([lat, lng, 1]);
+          });
+        });
+        if (points.length > 0) {
+          heatmap = {
+            points,
+            gradient: cfg.gradient || 'fire',
+            radius: cfg.radius || 30,
+            opacity: cfg.opacity || 0.7,
+            maxIntensity: cfg.maxIntensity || 10
+          };
+        }
+      }
+    }
+
     const snapshot = {
       center,
       zoom,
@@ -24,6 +50,7 @@ const MapShare = {
       })),
       tierColors: AppConfig.colors.tierMap,
       pinPath: AppConfig.marker.pinPath,
+      heatmap,
       createdAt: new Date().toISOString()
     };
 
