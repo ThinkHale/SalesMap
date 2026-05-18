@@ -30,7 +30,9 @@ const MapShare = {
     const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     await firebase.database().ref('salesTerritoryData/mapShares/' + id).set(snapshot);
 
-    return window.location.origin + '/share.html?id=' + id;
+    const shareUrl = new URL('share.html', window.location.href);
+    shareUrl.searchParams.set('id', id);
+    return shareUrl.toString();
   },
 
   showShareDialog(url) {

@@ -50,6 +50,7 @@ firebase.initializeApp({
 
 function showError(msg) {
   var el = document.getElementById('status');
+  el.style.display = '';
   el.textContent = msg;
   el.className = 'error';
 }
@@ -57,7 +58,7 @@ function showError(msg) {
 function renderMap(snapshot) {
   document.getElementById('status').style.display = 'none';
   var mapEl = document.getElementById('map');
-  mapEl.style.display = '';
+  mapEl.style.display = 'block';
 
   var d = snapshot.createdAt ? new Date(snapshot.createdAt).toLocaleString() : '';
   document.getElementById('subtitle').textContent = d ? 'Shared ' + d : 'Read-only view';
