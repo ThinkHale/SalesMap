@@ -1,7 +1,17 @@
 // js/map-export.js — MapExport (static module)
 
 const MapExport = {
-  exportViewOnlyMap() {
+  async _fetchInline(url) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(res.status);
+      return await res.text();
+    } catch {
+      return null;
+    }
+  },
+
+  async exportViewOnlyMap() {
     const layerManager = AppRegistry.require('layerManager');
     const layers = layerManager.getAllLayers();
     const center = AppRegistry.has('mapManager')
@@ -50,7 +60,14 @@ const MapExport = {
       }
     }
 
-    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData);
+    const [leafletCSS, leafletJS, wellknownJS, leafletHeatJS] = await Promise.all([
+      this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'),
+      this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'),
+      this._fetchInline('https://unpkg.com/wellknown@0.5.0/wellknown.js'),
+      heatmapData ? this._fetchInline('https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js') : Promise.resolve(null)
+    ]);
+
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS });
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -64,11 +81,23 @@ const MapExport = {
     toastManager.success('Map exported successfully');
   },
 
-  _buildExportHTML(layerDataJSON, center, zoom, heatmapData) {
+  _buildExportHTML(layerDataJSON, center, zoom, heatmapData, assets = {}) {
     const title = Utils.escapeHtml('SalesMap Export — ' + new Date().toLocaleDateString());
     const pinPath = AppConfig.marker.pinPath;
+
+    const leafletCSSTag = assets.leafletCSS
+      ? `<style>${assets.leafletCSS}</style>`
+      : '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>';
+    const leafletJSTag = assets.leafletJS
+      ? `<script>${assets.leafletJS}<\/script>`
+      : '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>';
+    const wellknownJSTag = assets.wellknownJS
+      ? `<script>${assets.wellknownJS}<\/script>`
+      : '<script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"><\/script>';
     const heatScript = heatmapData
-      ? '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>'
+      ? (assets.leafletHeatJS
+          ? `<script>${assets.leafletHeatJS}<\/script>`
+          : '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>')
       : '';
     const heatInit = heatmapData ? `
 var HEATMAP_GRADIENTS = {
@@ -95,7 +124,7 @@ L.heatLayer(${JSON.stringify(heatmapData.points)}, heatOpts).addTo(map);
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+${leafletCSSTag}
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -123,8 +152,8 @@ L.heatLayer(${JSON.stringify(heatmapData.points)}, heatOpts).addTo(map);
   <span class="read-only-badge">View Only</span>
 </div>
 <div id="map"></div>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"></script>
+${leafletJSTag}
+${wellknownJSTag}
 ${heatScript}
 <script>
 const LAYER_DATA = JSON.parse(decodeURIComponent("${layerDataJSON}"));

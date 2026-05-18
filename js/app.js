@@ -308,7 +308,10 @@ function setupDOMEventListeners() {
 
   // ── Export ──
   document.getElementById('exportMapBtn')?.addEventListener('click', () => {
-    AppRegistry.require('mapExport').exportViewOnlyMap();
+    AppRegistry.require('mapExport').exportViewOnlyMap().catch(err => {
+      console.error('Export failed', err);
+      toastManager.error('Export failed. Please try again.');
+    });
   });
 
   // ── Activity log export ──
@@ -407,7 +410,7 @@ function openCommandPalette() {
     const commands = [
       { label: 'Import CSV / Excel', action: () => { drawerManager.close(); document.getElementById('csvFileInput')?.click(); } },
       { label: 'Paste CSV Import', action: () => { drawerManager.close(); document.getElementById('pasteImportBtn')?.click(); } },
-      { label: 'Export Map (View Only)', action: () => { drawerManager.close(); MapExport.exportViewOnlyMap(); } },
+      { label: 'Export Map (View Only)', action: () => { drawerManager.close(); MapExport.exportViewOnlyMap().catch(() => toastManager.error('Export failed.')); } },
       { label: 'Reset Map View', action: () => { drawerManager.close(); AppRegistry.get('mapManager')?.resetView(); } },
       { label: 'Fit All Layers', action: () => { drawerManager.close(); lm?.fitToAll(); } },
       { label: 'Draw Point', action: () => { drawerManager.close(); DrawingController.startDrawing('point'); } },
