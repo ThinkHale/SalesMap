@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SalesMap — Shared View</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
+  #header { background: #0078d4; color: white; padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+  #header h1 { font-size: 16px; font-weight: 600; }
+  #header .subtitle { font-size: 12px; opacity: 0.8; }
+  .read-only-badge { background: #e8f4fc; color: #0078d4; font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid #b3d7f0; margin-left: auto; flex-shrink: 0; }
+  #map { flex: 1; min-height: 0; display: none; }
+  #status { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #555; flex-direction: column; gap: 12px; }
+  #status.error { color: #c00; }
+  .legend { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 200px; max-height: 300px; overflow-y: auto; }
+  .legend-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #333; }
+  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; color: #555; }
+  .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+  .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
+  .iw-row { font-size: 12px; margin-bottom: 3px; }
+  .iw-label { font-weight: 500; color: #555; margin-right: 4px; }
+  .iw-value { color: #333; }
+</style>
+</head>
+<body>
+<div id="header">
+  <div>
+    <h1>SalesMap — Shared View</h1>
+    <div class="subtitle" id="subtitle">Loading…</div>
+  </div>
+  <span class="read-only-badge">View Only</span>
+</div>
+<div id="status">Loading map…</div>
+<div id="map"></div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"></script>
+<script>
+var SUPABASE_URL = 'https://rpfoqfjtaijduflbgvtr.supabase.co';
+var SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJwZm9xZmp0YWlqZHVmbGJndnRyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUzMzA1OTcsImV4cCI6MjA5MDkwNjU5N30.56syj7vnm8HpMF1hdk3ybEg6TDwJmhrZ9G2G3TUa8zE';
+
+function showError(msg) {
+  var el = document.getElementById('status');
+  el.textContent = msg;
+  el.className = 'error';
+}
+
+function renderMap(snapshot) {
+  document.getElementById('status').style.display = 'none';
+  var mapEl = document.getElementById('map');
+  mapEl.style.display = '';
+
+  var d = snapshot.exportedAt ? new Date(snapshot.exportedAt).toLocaleString() : '';
+  document.getElementById('subtitle').textContent = d ? 'Shared ' + d : 'Read-only view';
+  document.title = 'SalesMap — Shared ' + (d || 'View');
+
+  var map = L.map('map').setView([snapshot.center.lat, snapshot.center.lng], snapshot.zoom);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    maxZoom: 19
+  }).addTo(map);
+
+  var LegendControl = L.Control.extend({
+    onAdd: function() {
+      var div = L.DomUtil.create('div', 'legend');
+      var title = document.createElement('div');
+      title.className = 'legend-title';
+      title.textContent = 'Layers';
+      div.appendChild(title);
+      (snapshot.layers || []).forEach(function(layer) {
+        if (!layer.visible) return;
+        var item = document.createElement('div');
+        item.className = 'legend-item';
+        var dot = document.createElement('div');
+        dot.className = 'legend-dot';
+        dot.style.background = layer.color || '#0078d4';
+        var name = document.createElement('span');
+        name.textContent = layer.name;
+        item.appendChild(dot);
+        item.appendChild(name);
+        div.appendChild(item);
+      });
+      return div;
+    }
+  });
+  new LegendControl({ position: 'bottomleft' }).addTo(map);
+
+  var TIER_COLORS = snapshot.tierColors || {};
+  var PIN_PATH = snapshot.pinPath || '';
+
+  function makeIcon(color) {
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="24" height="42">'
+      + '<path d="' + PIN_PATH + '" fill="' + color + '" stroke="white" stroke-width="1.5"/>'
+      + '</svg>';
+    return L.divIcon({ html: svg, className: '', iconSize: [24, 42], iconAnchor: [12, 42], popupAnchor: [0, -42] });
+  }
+
+  function makePopupContent(feature) {
+    var html = '<div style="padding:4px"><div class="iw-title">' + (feature.name || 'Feature') + '</div>';
+    ['description', 'tier', 'bdm', 'revenue'].forEach(function(prop) {
+      if (feature[prop]) {
+        html += '<div class="iw-row"><span class="iw-label">' + prop + ':</span>'
+              + '<span class="iw-value">' + feature[prop] + '</span></div>';
+      }
+    });
+    return html + '</div>';
+  }
+
+  (snapshot.layers || []).forEach(function(layer) {
+    if (!layer.visible) return;
+    (layer.features || []).forEach(function(feature) {
+      if (feature.wkt) {
+        try {
+          var parsed = wellknown ? wellknown.parse(feature.wkt) : null;
+          if (parsed && parsed.coordinates) {
+            var latlngs = parsed.coordinates[0].map(function(c) { return [c[1], c[0]]; });
+            var fillColor = TIER_COLORS[String(feature.tier || '').toLowerCase()] || layer.color || '#0078d4';
+            L.polygon(latlngs, {
+              fillColor: fillColor,
+              fillOpacity: 0.35,
+              color: layer.color || '#0078d4',
+              weight: 2
+            }).bindPopup(makePopupContent(feature)).addTo(map);
+          }
+        } catch(e) {}
+      } else if (feature.latitude && feature.longitude) {
+        var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
+        var color = tierColor || layer.color || '#0078d4';
+        L.marker(
+          [parseFloat(feature.latitude), parseFloat(feature.longitude)],
+          { icon: makeIcon(color), title: feature.name || '' }
+        ).bindPopup(makePopupContent(feature)).addTo(map);
+      }
+    });
+  });
+}
+
+async function init() {
+  var id = new URLSearchParams(window.location.search).get('id');
+  if (!id) { showError('No map ID provided in the URL.'); return; }
+  try {
+    var res = await fetch(
+      SUPABASE_URL + '/rest/v1/map_snapshots?id=eq.' + encodeURIComponent(id) + '&select=data',
+      { headers: { apikey: SUPABASE_KEY, Authorization: 'Bearer ' + SUPABASE_KEY } }
+    );
+    if (!res.ok) throw new Error(res.status);
+    var rows = await res.json();
+    if (!rows.length) { showError('Map snapshot not found. The link may be invalid.'); return; }
+    renderMap(rows[0].data);
+  } catch(e) {
+    showError('Failed to load map. Please check your connection and try again.');
+  }
+}
+
+init();
+</script>
+</body>
+</html>

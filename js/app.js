@@ -314,6 +314,22 @@ function setupDOMEventListeners() {
     });
   });
 
+  document.getElementById('shareLinkBtn')?.addEventListener('click', () => {
+    const btn = document.getElementById('shareLinkBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Sharing…';
+    AppRegistry.require('mapShare').createShareLink()
+      .then(url => AppRegistry.require('mapShare').showShareDialog(url))
+      .catch(err => {
+        console.error('Share failed', err);
+        toastManager.error('Failed to create share link. Please try again.');
+      })
+      .finally(() => {
+        btn.disabled = false;
+        btn.textContent = '🔗 Share';
+      });
+  });
+
   // ── Activity log export ──
   document.getElementById('exportActivityBtn')?.addEventListener('click', () => {
     AppRegistry.get('activityLog')?.exportCSV();
