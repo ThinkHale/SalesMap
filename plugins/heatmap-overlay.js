@@ -125,8 +125,12 @@ const HeatmapOverlayPlugin = {
   },
 
   _activate() {
-    if (typeof deck === 'undefined' || !deck.DeckOverlay || !deck.HeatmapLayer) {
-      this._api.ui.toast.error('deck.gl not loaded — heatmap unavailable');
+    if (typeof deck === 'undefined' || !deck.HeatmapLayer) {
+      this._api.ui.toast.error('deck.gl failed to load — heatmap unavailable');
+      return;
+    }
+    if (!deck.DeckOverlay && !deck.GoogleMapsOverlay) {
+      this._api.ui.toast.error('deck.gl Google Maps overlay not loaded — heatmap unavailable');
       return;
     }
 
@@ -194,7 +198,8 @@ const HeatmapOverlayPlugin = {
       aggregation: 'SUM'
     });
 
-    const overlay = new deck.DeckOverlay({ layers: [heatmapLayer] });
+    const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
+    const overlay = new OverlayClass({ layers: [heatmapLayer] });
     overlay.setMap(map);
     return overlay;
   },
