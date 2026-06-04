@@ -51,7 +51,8 @@ const MapExport = {
         if (points.length > 0) {
           heatmapData = {
             points,
-            gradient:  cfg.gradient  || 'fire',
+            // Pass the actual colorRange used by deck.gl so the export matches exactly
+            colorRange: pluginDef._colorRanges[cfg.gradient] || pluginDef._colorRanges.default,
             radius:    cfg.radius    || 30,
             opacity:   cfg.opacity   || 0.7,
             intensity: cfg.intensity || 1,
@@ -100,26 +101,28 @@ const MapExport = {
           ? `<script>${assets.leafletHeatJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
           : '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>')
       : '';
+    // Convert the deck.gl colorRange (array of 6 [r,g,b,a] stops) to leaflet.heat gradient format.
+    // Stops are evenly spaced 0–1; alpha channel (0–255) becomes CSS opacity (0–1).
+    const leafletGradient = heatmapData
+      ? Object.fromEntries(
+          heatmapData.colorRange.map(([r, g, b, a], i, arr) => [
+            (i / (arr.length - 1)).toFixed(2),
+            `rgba(${r},${g},${b},${(a / 255).toFixed(2)})`
+          ])
+        )
+      : null;
+
     const heatInit = heatmapData ? `
-var HEATMAP_GRADIENTS = {
-  fire:    { 0.33: '#f00', 0.67: '#ffa500', 1.0: '#ff0' },
-  cool:    { 0.25: '#00f', 0.5: '#0ff', 0.75: '#0f0', 1.0: '#ff0' },
-  ocean:   { 0.25: '#00008b', 0.5: '#0064c8', 0.75: '#00bfff', 1.0: '#add8e6' },
-  purple:  { 0.25: '#800080', 0.5: '#f0f', 0.75: '#ff80ff', 1.0: '#fff' },
-  heat:    { 0.25: '#00f', 0.5: '#0f0', 0.75: '#ff0', 1.0: '#f00' }
-};
 // Translate deck.gl params to leaflet.heat equivalents:
-// intensity (deck.gl weight multiplier 0.1–5) → max: lower max = more concentrated hotspots
-// threshold (deck.gl fade cutoff 0.01–0.5)    → minOpacity: similar fade-at-edges behaviour
+// intensity (deck.gl weight multiplier 0.1–5) → max inverted: higher intensity = lower max threshold
+// threshold (deck.gl fade cutoff 0.01–0.5)    → minOpacity
 var heatOpts = {
   radius:     ${heatmapData.radius},
   max:        ${(1 / (heatmapData.intensity || 1)).toFixed(3)},
   minOpacity: ${Math.max(0.02, heatmapData.threshold || 0.05)},
   blur:       15,
-  opacity:    ${heatmapData.opacity || 0.7}
+  gradient:   ${JSON.stringify(leafletGradient)}
 };
-var grad = HEATMAP_GRADIENTS[${JSON.stringify(heatmapData.gradient)}];
-if (grad) heatOpts.gradient = grad;
 L.heatLayer(${JSON.stringify(heatmapData.points)}, heatOpts).addTo(map);
 ` : '';
 
