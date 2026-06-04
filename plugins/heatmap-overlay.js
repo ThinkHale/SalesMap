@@ -4,7 +4,7 @@
 const HeatmapOverlayPlugin = {
   id: 'heatmap-overlay',
   name: 'Heatmap Overlay',
-  version: '2.0.0',
+  version: '2.1.0',
   description: 'Renders point layers as a density heatmap using deck.gl HeatmapLayer.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
@@ -71,8 +71,9 @@ const HeatmapOverlayPlugin = {
   _isActive: false,
   _controlBtn: null,
   _hiddenLayerIds: [],
+  _cachedPoints: null,   // invalidated only when layer data changes
+  _refreshTimer: null,   // debounce handle
 
-  // deck.gl colorRange: array of 6 [r, g, b, a] stops (low → high intensity)
   _colorRanges: {
     fire:    [[0,0,0,0], [100,0,0,120], [200,50,0,160], [255,100,0,200], [255,180,0,230], [255,255,0,255]],
     cool:    [[0,0,0,0], [0,0,180,80],  [0,150,255,140],[0,255,200,180], [100,255,100,220],[255,255,0,255]],
@@ -88,7 +89,6 @@ const HeatmapOverlayPlugin = {
 
     const savedRadius = api.config.get('radius');
     if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 30);
-    // Migrate old maxIntensity key → intensity
     if (api.config.get('maxIntensity') !== undefined && api.config.get('intensity') === undefined) {
       api.config.set('intensity', 1);
     }
@@ -99,17 +99,18 @@ const HeatmapOverlayPlugin = {
       onClick: () => this._toggle()
     });
 
-    api.events.on('layer.created',            () => { if (this._isActive) this._refresh(); });
-    api.events.on('layer.deleted',            () => { if (this._isActive) this._refresh(); });
-    api.events.on('features.added',           () => { if (this._isActive) this._refresh(); });
-    api.events.on('layer.visibility.changed', () => { if (this._isActive) this._refresh(); });
+    // Layer data changes → invalidate point cache, re-collect
+    api.events.on('layer.created',            () => this._refreshData());
+    api.events.on('layer.deleted',            () => this._refreshData());
+    api.events.on('features.added',           () => this._refreshData());
+    api.events.on('layer.visibility.changed', () => this._refreshData());
 
     const wasActive = api.storage.get('heatmap_active');
     if (wasActive) {
       let restored = false;
       const tryRestore = () => { if (!restored) { restored = true; this._activate(); } };
-      api.events.once('features.added',   tryRestore);
-      api.events.once('layers.imported',  tryRestore);
+      api.events.once('features.added',  tryRestore);
+      api.events.once('layers.imported', tryRestore);
     }
   },
 
@@ -123,6 +124,7 @@ const HeatmapOverlayPlugin = {
   },
 
   destroy() {
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
     this._destroyOverlay();
     this._showPointLayerMarkers();
   },
@@ -159,52 +161,87 @@ const HeatmapOverlayPlugin = {
       return;
     }
 
-    const points = this._collectPoints();
-    if (points.length === 0) {
+    this._cachedPoints = this._collectPoints();
+    if (this._cachedPoints.length === 0) {
       this._api.ui.toast.warning('No visible point data for heatmap');
       return;
     }
 
     this._destroyOverlay();
-    this._deckOverlay = this._buildDeckOverlay(map, points);
+    const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
+    this._deckOverlay = new OverlayClass({ layers: [this._buildLayer(this._cachedPoints)] });
+    this._deckOverlay.setMap(map);
 
     this._isActive = true;
     this._api.storage.set('heatmap_active', true);
     if (this._controlBtn) this._controlBtn.classList.add('active');
     this._hidePointLayerMarkers();
-    this._api.ui.toast.success(`Heatmap active (${points.length} points)`);
+    this._api.ui.toast.success(`Heatmap active (${this._cachedPoints.length} points)`);
   },
 
   _deactivate() {
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
     this._destroyOverlay();
     this._isActive = false;
+    this._cachedPoints = null;
     this._api.storage.set('heatmap_active', false);
     if (this._controlBtn) this._controlBtn.classList.remove('active');
     this._showPointLayerMarkers();
     this._api.ui.toast.info('Heatmap disabled');
   },
 
+  // Called by plugin-api on every config change (slider drag, select change).
+  // Reuses cached points — only updates props on the existing overlay.
+  // Debounced at 50 ms so rapid slider movement coalesces into one render.
   _refresh() {
     if (!this._isActive) return;
+    this._schedule(false, 50);
+  },
+
+  // Called when layer data changes. Invalidates cached points.
+  // Slightly longer debounce since layer events can fire in bursts.
+  _refreshData() {
+    if (!this._isActive) return;
+    this._cachedPoints = null;
+    this._schedule(true, 100);
+  },
+
+  _schedule(rebuildData, delay) {
+    if (this._refreshTimer) clearTimeout(this._refreshTimer);
+    this._refreshTimer = setTimeout(() => {
+      this._refreshTimer = null;
+      this._applyUpdate(rebuildData);
+    }, delay);
+  },
+
+  _applyUpdate(rebuildData) {
     const map = this._api.map.getMap();
     if (!map) return;
 
-    const points = this._collectPoints();
-    this._destroyOverlay();
-
-    if (points.length > 0) {
-      this._deckOverlay = this._buildDeckOverlay(map, points);
+    if (rebuildData || !this._cachedPoints) {
+      this._cachedPoints = this._collectPoints();
+      this._showPointLayerMarkers();
+      this._hidePointLayerMarkers();
     }
 
-    this._showPointLayerMarkers();
-    this._hidePointLayerMarkers();
+    if (!this._cachedPoints.length) return;
+
+    const layer = this._buildLayer(this._cachedPoints);
+
+    if (this._deckOverlay) {
+      // Update the existing WebGL overlay in-place — no context teardown
+      this._deckOverlay.setProps({ layers: [layer] });
+    } else {
+      const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
+      this._deckOverlay = new OverlayClass({ layers: [layer] });
+      this._deckOverlay.setMap(map);
+    }
   },
 
-  _buildDeckOverlay(map, points) {
+  _buildLayer(points) {
     const cfg = this._api.config.get();
     const colorRange = this._colorRanges[cfg.gradient] || this._colorRanges.default;
-
-    const heatmapLayer = new deck.HeatmapLayer({
+    return new deck.HeatmapLayer({
       id: 'salesmap-heatmap',
       data: points,
       getPosition: d => [d.lng, d.lat],
@@ -216,25 +253,17 @@ const HeatmapOverlayPlugin = {
       opacity:      cfg.opacity   || 0.7,
       aggregation: 'SUM'
     });
-
-    const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
-    const overlay = new OverlayClass({ layers: [heatmapLayer] });
-    overlay.setMap(map);
-    return overlay;
   },
 
   _collectPoints() {
     const layers = this._api.layers.getAll();
     const points = [];
     layers.forEach(layer => {
-      if (!layer.visible) return;
-      if (layer.type === 'polygon') return;
+      if (!layer.visible || layer.type === 'polygon') return;
       (layer.features || []).forEach(feature => {
         const lat = parseFloat(feature.latitude);
         const lng = parseFloat(feature.longitude);
-        if (!isNaN(lat) && !isNaN(lng)) {
-          points.push({ lat, lng, weight: 1 });
-        }
+        if (!isNaN(lat) && !isNaN(lng)) points.push({ lat, lng, weight: 1 });
       });
     });
     return points;
@@ -251,12 +280,9 @@ const HeatmapOverlayPlugin = {
   },
 
   _showPointLayerMarkers() {
-    (this._hiddenLayerIds || []).forEach(layerId => {
-      this._api.map.showLayerMarkers(layerId);
-    });
+    (this._hiddenLayerIds || []).forEach(id => this._api.map.showLayerMarkers(id));
     this._hiddenLayerIds = [];
   }
 };
 
-// Auto-registration
 AppRegistry.whenReady('pluginRegistry', r => r.register(HeatmapOverlayPlugin));
