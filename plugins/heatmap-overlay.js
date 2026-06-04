@@ -1,10 +1,11 @@
-// plugins/heatmap-overlay.js — Heatmap visualization plugin
+// plugins/heatmap-overlay.js — Heatmap visualization plugin (deck.gl HeatmapLayer)
+// Replaces the deprecated Google Maps visualization.HeatmapLayer removed in Maps API v3.65.
 
 const HeatmapOverlayPlugin = {
   id: 'heatmap-overlay',
   name: 'Heatmap Overlay',
-  version: '1.0.0',
-  description: 'Renders point layers as a density heatmap using the Google Maps visualization library.',
+  version: '2.0.0',
+  description: 'Renders point layers as a density heatmap using deck.gl HeatmapLayer.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
 
@@ -51,54 +52,45 @@ const HeatmapOverlayPlugin = {
   },
 
   _api: null,
-  _heatmapLayer: null,
+  _deckOverlay: null,
   _isActive: false,
   _controlBtn: null,
   _hiddenLayerIds: [],
 
-  _gradients: {
-    fire:    ['rgba(0,0,0,0)', 'rgba(255,0,0,0.6)', 'rgba(255,165,0,0.8)', 'rgba(255,255,0,1)'],
-    cool:    ['rgba(0,0,0,0)', 'rgba(0,0,255,0.4)', 'rgba(0,255,255,0.6)', 'rgba(0,255,0,0.8)', 'rgba(255,255,0,1)'],
-    ocean:   ['rgba(0,0,0,0)', 'rgba(0,0,139,0.4)', 'rgba(0,100,200,0.6)', 'rgba(0,191,255,0.8)', 'rgba(173,216,230,1)'],
-    purple:  ['rgba(0,0,0,0)', 'rgba(128,0,128,0.4)', 'rgba(255,0,255,0.6)', 'rgba(255,128,255,0.8)', 'rgba(255,255,255,1)'],
-    heat:    ['rgba(0,0,0,0)', 'rgba(0,0,255,0.3)', 'rgba(0,255,0,0.5)', 'rgba(255,255,0,0.7)', 'rgba(255,0,0,1)'],
-    default: null
+  // deck.gl colorRange: array of 6 [r, g, b, a] stops (low → high intensity)
+  _colorRanges: {
+    fire:    [[0,0,0,0], [100,0,0,120], [200,50,0,160], [255,100,0,200], [255,180,0,230], [255,255,0,255]],
+    cool:    [[0,0,0,0], [0,0,180,80],  [0,150,255,140],[0,255,200,180], [100,255,100,220],[255,255,0,255]],
+    ocean:   [[0,0,0,0], [0,0,100,80],  [0,50,160,130], [0,130,220,180],[0,200,255,220],  [180,230,255,255]],
+    purple:  [[0,0,0,0], [60,0,80,80],  [130,0,180,140],[200,0,220,180],[255,100,255,220],[255,220,255,255]],
+    heat:    [[0,0,0,0], [0,0,220,60],  [0,180,0,120],  [200,200,0,180],[255,100,0,220],  [255,0,0,255]],
+    default: [[0,0,0,0], [0,180,180,80],[0,200,100,140],[100,220,0,180],[220,200,0,220],  [255,0,0,255]]
   },
 
   init(api) {
     this._api = api;
     this._hiddenLayerIds = [];
 
-    // Migrate old default radius (20) to new default (30).
     const savedRadius = api.config.get('radius');
     if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 30);
 
-    // Pre-load the visualization library so it's ready when the user clicks.
-    if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
-      google.maps.importLibrary('visualization').catch(() => {});
-    }
-
-    // Add toolbar button
     this._controlBtn = api.ui.addToolbarButton({
       label: '🌡',
       tooltip: 'Toggle Heatmap',
       onClick: () => this._toggle()
     });
 
-    // Listen for layer changes to update heatmap
-    api.events.on('layer.created', () => { if (this._isActive) this._refresh(); });
-    api.events.on('layer.deleted', () => { if (this._isActive) this._refresh(); });
-    api.events.on('features.added', () => { if (this._isActive) this._refresh(); });
+    api.events.on('layer.created',            () => { if (this._isActive) this._refresh(); });
+    api.events.on('layer.deleted',            () => { if (this._isActive) this._refresh(); });
+    api.events.on('features.added',           () => { if (this._isActive) this._refresh(); });
     api.events.on('layer.visibility.changed', () => { if (this._isActive) this._refresh(); });
 
-    // Restore active state after layers load.
-    // Firebase path emits 'layers.imported', CSV/manual path emits 'features.added'.
     const wasActive = api.storage.get('heatmap_active');
     if (wasActive) {
       let restored = false;
       const tryRestore = () => { if (!restored) { restored = true; this._activate(); } };
-      api.events.once('features.added', tryRestore);
-      api.events.once('layers.imported', tryRestore);
+      api.events.once('features.added',   tryRestore);
+      api.events.once('layers.imported',  tryRestore);
     }
   },
 
@@ -107,18 +99,21 @@ const HeatmapOverlayPlugin = {
   },
 
   onDisable() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.setMap(null);
-    }
+    this._destroyOverlay();
     this._showPointLayerMarkers();
   },
 
   destroy() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.setMap(null);
-      this._heatmapLayer = null;
-    }
+    this._destroyOverlay();
     this._showPointLayerMarkers();
+  },
+
+  _destroyOverlay() {
+    if (this._deckOverlay) {
+      this._deckOverlay.setMap(null);
+      this._deckOverlay.finalize();
+      this._deckOverlay = null;
+    }
   },
 
   _toggle() {
@@ -130,6 +125,11 @@ const HeatmapOverlayPlugin = {
   },
 
   _activate() {
+    if (typeof deck === 'undefined' || !deck.DeckOverlay || !deck.HeatmapLayer) {
+      this._api.ui.toast.error('deck.gl not loaded — heatmap unavailable');
+      return;
+    }
+
     const map = this._api.map.getMap();
     if (!map) {
       this._api.ui.toast.error('Map not ready');
@@ -142,47 +142,18 @@ const HeatmapOverlayPlugin = {
       return;
     }
 
-    const cfg = this._api.config.get();
-    const gradient = this._gradients[cfg.gradient];
+    this._destroyOverlay();
+    this._deckOverlay = this._buildDeckOverlay(map, points);
 
-    const options = {
-      data: points,
-      radius: cfg.radius || 30,
-      opacity: cfg.opacity || 0.7,
-      maxIntensity: cfg.maxIntensity > 0 ? cfg.maxIntensity : 10,
-      dissipating: true
-    };
-    if (gradient) options.gradient = gradient;
-
-    if (this._heatmapLayer) {
-      this._heatmapLayer.setMap(null);
-    }
-
-    const doRender = () => {
-      this._heatmapLayer = new google.maps.visualization.HeatmapLayer(options);
-      this._heatmapLayer.setMap(map);
-      this._isActive = true;
-      this._api.storage.set('heatmap_active', true);
-      if (this._controlBtn) this._controlBtn.classList.add('active');
-      this._hidePointLayerMarkers();
-      this._api.ui.toast.success(`Heatmap active (${points.length} points)`);
-    };
-
-    if (typeof google !== 'undefined' && google.maps.visualization?.HeatmapLayer) {
-      doRender();
-    } else if (typeof google !== 'undefined' && typeof google.maps.importLibrary === 'function') {
-      google.maps.importLibrary('visualization')
-        .then(() => doRender())
-        .catch(() => this._api.ui.toast.error('Heatmap visualization library not loaded'));
-    } else {
-      this._api.ui.toast.error('Heatmap visualization library not loaded');
-    }
+    this._isActive = true;
+    this._api.storage.set('heatmap_active', true);
+    if (this._controlBtn) this._controlBtn.classList.add('active');
+    this._hidePointLayerMarkers();
+    this._api.ui.toast.success(`Heatmap active (${points.length} points)`);
   },
 
   _deactivate() {
-    if (this._heatmapLayer) {
-      this._heatmapLayer.setMap(null);
-    }
+    this._destroyOverlay();
     this._isActive = false;
     this._api.storage.set('heatmap_active', false);
     if (this._controlBtn) this._controlBtn.classList.remove('active');
@@ -191,26 +162,43 @@ const HeatmapOverlayPlugin = {
   },
 
   _refresh() {
-    if (!this._isActive || !this._heatmapLayer) return;
+    if (!this._isActive) return;
+    const map = this._api.map.getMap();
+    if (!map) return;
+
     const points = this._collectPoints();
-    const cfg = this._api.config.get();
-    const gradient = this._gradients[cfg.gradient];
+    this._destroyOverlay();
 
-    this._heatmapLayer.setData(points);
-    this._heatmapLayer.setOptions({
-      radius: cfg.radius || 30,
-      opacity: cfg.opacity || 0.7,
-      maxIntensity: cfg.maxIntensity > 0 ? cfg.maxIntensity : 10,
-      dissipating: true,
-      gradient: gradient || undefined
-    });
+    if (points.length > 0) {
+      this._deckOverlay = this._buildDeckOverlay(map, points);
+    }
 
-    // Re-apply marker hiding in case visibility changed
     this._showPointLayerMarkers();
     this._hidePointLayerMarkers();
   },
 
-  // Collect points only from visible layers — heatmap reflects what is shown.
+  _buildDeckOverlay(map, points) {
+    const cfg = this._api.config.get();
+    const colorRange = this._colorRanges[cfg.gradient] || this._colorRanges.default;
+
+    const heatmapLayer = new deck.HeatmapLayer({
+      id: 'salesmap-heatmap',
+      data: points,
+      getPosition: d => [d.lng, d.lat],
+      getWeight:   d => d.weight,
+      radiusPixels:  cfg.radius || 30,
+      intensity:     1,
+      threshold:     0.05,
+      colorRange,
+      opacity: cfg.opacity || 0.7,
+      aggregation: 'SUM'
+    });
+
+    const overlay = new deck.DeckOverlay({ layers: [heatmapLayer] });
+    overlay.setMap(map);
+    return overlay;
+  },
+
   _collectPoints() {
     const layers = this._api.layers.getAll();
     const points = [];
@@ -221,14 +209,13 @@ const HeatmapOverlayPlugin = {
         const lat = parseFloat(feature.latitude);
         const lng = parseFloat(feature.longitude);
         if (!isNaN(lat) && !isNaN(lng)) {
-          points.push({ location: new google.maps.LatLng(lat, lng), weight: 1 });
+          points.push({ lat, lng, weight: 1 });
         }
       });
     });
     return points;
   },
 
-  // Hide markers for all visible point layers so the heatmap is unobstructed.
   _hidePointLayerMarkers() {
     const layers = this._api.layers.getAll();
     this._hiddenLayerIds = [];
