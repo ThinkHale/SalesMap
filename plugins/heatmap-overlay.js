@@ -30,7 +30,7 @@ const HeatmapOverlayPlugin = {
     },
     radius: {
       type: 'range',
-      default: 30,
+      default: 45,
       min: 5,
       max: 100,
       step: 2,
@@ -48,12 +48,12 @@ const HeatmapOverlayPlugin = {
     },
     threshold: {
       type: 'range',
-      default: 0.05,
+      default: 0.1,
       min: 0.01,
       max: 0.5,
       step: 0.01,
       decimals: 2,
-      label: 'Threshold (fade cutoff)'
+      label: 'Smoothing (higher = softer blobs)'
     },
     opacity: {
       type: 'range',
@@ -74,15 +74,16 @@ const HeatmapOverlayPlugin = {
   _cachedPoints: null,   // invalidated only when layer data changes
   _refreshTimer: null,   // debounce handle
 
-  // 6-stop [r,g,b,a] ramps with a gentle low-end alpha curve (0→55→105→160→210→255)
-  // so sparse points fade in softly instead of rendering as hard solid dots.
+  // 6-stop [r,g,b,a] ramps. Only the first stop is fully transparent; the rest
+  // carry high alpha (130→255) so each point's broad footprint is visible and
+  // overlapping footprints blend into a continuous field instead of sharp dots.
   _colorRanges: {
-    fire:    [[0,0,0,0], [128,0,0,55],  [200,40,0,105],  [255,110,0,160], [255,180,30,210], [255,245,140,255]],
-    cool:    [[0,0,0,0], [0,40,170,55], [0,140,230,105], [0,220,200,160], [120,240,90,210], [245,245,120,255]],
-    ocean:   [[0,0,0,0], [0,30,90,55],  [0,70,150,105],  [0,130,210,160], [0,190,240,210],  [170,225,255,255]],
-    purple:  [[0,0,0,0], [50,0,70,55],  [110,0,160,105], [180,30,210,160], [230,120,240,210],[250,220,255,255]],
-    heat:    [[0,0,0,0], [0,0,200,55],  [0,170,160,105], [120,210,40,160], [240,200,0,210],  [230,40,30,255]],
-    default: [[0,0,0,0], [0,160,170,55],[0,200,120,105], [120,210,40,160], [230,200,0,210],  [235,40,30,255]]
+    fire:    [[0,0,0,0], [128,0,0,130],  [200,40,0,175],  [255,110,0,205], [255,180,30,232], [255,245,140,255]],
+    cool:    [[0,0,0,0], [0,40,170,130], [0,140,230,175], [0,220,200,205], [120,240,90,232], [245,245,120,255]],
+    ocean:   [[0,0,0,0], [0,30,90,130],  [0,70,150,175],  [0,130,210,205], [0,190,240,232],  [170,225,255,255]],
+    purple:  [[0,0,0,0], [50,0,70,130],  [110,0,160,175], [180,30,210,205], [230,120,240,232],[250,220,255,255]],
+    heat:    [[0,0,0,0], [0,0,200,130],  [0,170,160,175], [120,210,40,205], [240,200,0,232],  [230,40,30,255]],
+    default: [[0,0,0,0], [0,160,170,130],[0,200,120,175], [120,210,40,205], [230,200,0,232],  [235,40,30,255]]
   },
 
   init(api) {
