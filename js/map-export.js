@@ -248,6 +248,44 @@ function makePopupContent(feature) {
   return html + '</div>';
 }
 
+// Cluster icon styling — mirrors the live app's tiered SVG renderer so exported
+// clusters look identical to the in-app view.
+function clusterStyle(count) {
+  if (count < 10)  return { color: '#4CAF50', size: 40 };
+  if (count < 50)  return { color: '#FF9800', size: 50 };
+  if (count < 100) return { color: '#F44336', size: 60 };
+  if (count < 500) return { color: '#9C27B0', size: 70 };
+  return { color: '#E91E63', size: 80 };
+}
+function lightenColor(hex, pct) {
+  var n = parseInt(hex.replace('#', ''), 16);
+  var amt = Math.round(2.55 * pct);
+  var r = Math.min(255, (n >> 16) + amt);
+  var g = Math.min(255, ((n >> 8) & 0xff) + amt);
+  var b = Math.min(255, (n & 0xff) + amt);
+  return '#' + [r, g, b].map(function(v) { return v.toString(16).padStart(2, '0'); }).join('');
+}
+function formatCount(count) {
+  return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
+}
+function makeClusterIcon(cluster) {
+  var count = cluster.getChildCount();
+  var s = clusterStyle(count);
+  var light = lightenColor(s.color, 20);
+  var label = formatCount(count);
+  var fontSize = s.size * 0.35;
+  var uid = 'c' + Math.random().toString(36).slice(2);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + s.size + '" height="' + s.size + '" viewBox="0 0 ' + s.size + ' ' + s.size + '">'
+    + '<defs><radialGradient id="' + uid + '" cx="35%" cy="35%">'
+    + '<stop offset="0%" style="stop-color:' + light + ';stop-opacity:1"/>'
+    + '<stop offset="100%" style="stop-color:' + s.color + ';stop-opacity:1"/>'
+    + '</radialGradient></defs>'
+    + '<circle cx="' + (s.size/2) + '" cy="' + (s.size/2) + '" r="' + (s.size/2-2) + '" fill="url(#' + uid + ')" stroke="white" stroke-width="2"/>'
+    + '<text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="white" font-size="' + fontSize + '" font-family="Arial,sans-serif" font-weight="bold">' + label + '</text>'
+    + '</svg>';
+  return L.divIcon({ html: svg, className: '', iconSize: [s.size, s.size] });
+}
+
 LAYER_DATA.forEach(function(layer) {
   if (!layer.visible) return;
 
@@ -258,7 +296,8 @@ LAYER_DATA.forEach(function(layer) {
         disableClusteringAtZoom: CLUSTER_SETTINGS.maxZoom + 1,
         spiderfyOnMaxZoom: true,
         showCoverageOnHover: false,
-        chunkedLoading: true
+        chunkedLoading: true,
+        iconCreateFunction: makeClusterIcon
       })
     : null;
 

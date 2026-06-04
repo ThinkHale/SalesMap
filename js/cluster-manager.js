@@ -7,12 +7,13 @@ class ClusterManager {
     this._clusterers = new Map(); // layerId → MarkerClusterer
     this._markers = new Map();   // layerId → markers[] (source of truth)
     this._clusteredSets = new Map(); // layerId → Set of marker objects currently in clusterer
-    this._enabled = true;
     this._idleListener = null;
     this._renderTimer = undefined;
     this._spiderfyMarkers = [];
     this._spiderMapListener = null;
     this._settings = this._loadSettings();
+    // Reconcile runtime flag with persisted setting so a disabled state survives reload.
+    this._enabled = this._settings.enabled !== false;
   }
 
   _defaultSettings() {
@@ -47,6 +48,8 @@ class ClusterManager {
     this._markers.get(layerId).push(...markers);
 
     if (!this._enabled) {
+      // Ensure viewport culling is active even when clustering started disabled on load.
+      this._setupIdleListener();
       this._showMarkersInViewport(markers);
       return;
     }
