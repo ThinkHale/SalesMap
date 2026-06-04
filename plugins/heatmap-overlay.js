@@ -1,11 +1,13 @@
-// plugins/heatmap-overlay.js — Heatmap visualization plugin (deck.gl HeatmapLayer)
-// Replaces the deprecated Google Maps visualization.HeatmapLayer removed in Maps API v3.65.
+// plugins/heatmap-overlay.js — Heatmap visualization plugin
+// Renders natively on Google Maps via a canvas OverlayView (no second map engine).
+// Uses the same brush-accumulation algorithm as leaflet.heat, so the live map and
+// the leaflet.heat-based exports/share views look consistent.
 
 const HeatmapOverlayPlugin = {
   id: 'heatmap-overlay',
   name: 'Heatmap Overlay',
-  version: '2.1.0',
-  description: 'Renders point layers as a density heatmap using deck.gl HeatmapLayer.',
+  version: '3.0.0',
+  description: 'Renders point layers as a density heatmap using a Google Maps canvas overlay.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
 
@@ -67,16 +69,14 @@ const HeatmapOverlayPlugin = {
   },
 
   _api: null,
-  _deckOverlay: null,
+  _overlay: null,
   _isActive: false,
   _controlBtn: null,
   _hiddenLayerIds: [],
-  _cachedPoints: null,   // invalidated only when layer data changes
-  _refreshTimer: null,   // debounce handle
+  _cachedPoints: null,
 
-  // 6-stop [r,g,b,a] ramps. Only the first stop is fully transparent; the rest
-  // carry high alpha (130→255) so each point's broad footprint is visible and
-  // overlapping footprints blend into a continuous field instead of sharp dots.
+  // 6-stop [r,g,b,a] ramps. The leading transparent stop is dropped when building
+  // the color palette; transparency on the map comes from accumulated brush alpha.
   _colorRanges: {
     fire:    [[0,0,0,0], [128,0,0,130],  [200,40,0,175],  [255,110,0,205], [255,180,30,232], [255,245,140,255]],
     cool:    [[0,0,0,0], [0,40,170,130], [0,140,230,175], [0,220,200,205], [120,240,90,232], [245,245,120,255]],
@@ -91,7 +91,7 @@ const HeatmapOverlayPlugin = {
     this._hiddenLayerIds = [];
 
     const savedRadius = api.config.get('radius');
-    if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 30);
+    if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 45);
     if (api.config.get('maxIntensity') !== undefined && api.config.get('intensity') === undefined) {
       api.config.set('intensity', 1);
     }
@@ -102,7 +102,6 @@ const HeatmapOverlayPlugin = {
       onClick: () => this._toggle()
     });
 
-    // Layer data changes → invalidate point cache, re-collect
     api.events.on('layer.created',            () => this._refreshData());
     api.events.on('layer.deleted',            () => this._refreshData());
     api.events.on('features.added',           () => this._refreshData());
@@ -127,34 +126,25 @@ const HeatmapOverlayPlugin = {
   },
 
   destroy() {
-    if (this._refreshTimer) clearTimeout(this._refreshTimer);
     this._destroyOverlay();
     this._showPointLayerMarkers();
   },
 
   _destroyOverlay() {
-    if (this._deckOverlay) {
-      this._deckOverlay.setMap(null);
-      this._deckOverlay.finalize();
-      this._deckOverlay = null;
+    if (this._overlay) {
+      this._overlay.setMap(null);
+      this._overlay = null;
     }
   },
 
   _toggle() {
-    if (this._isActive) {
-      this._deactivate();
-    } else {
-      this._activate();
-    }
+    if (this._isActive) this._deactivate();
+    else this._activate();
   },
 
   _activate() {
-    if (typeof deck === 'undefined' || !deck.HeatmapLayer) {
-      this._api.ui.toast.error('deck.gl failed to load — heatmap unavailable');
-      return;
-    }
-    if (!deck.DeckOverlay && !deck.GoogleMapsOverlay) {
-      this._api.ui.toast.error('deck.gl Google Maps overlay not loaded — heatmap unavailable');
+    if (typeof google === 'undefined' || !google.maps || !google.maps.OverlayView) {
+      this._api.ui.toast.error('Map not ready — heatmap unavailable');
       return;
     }
 
@@ -171,9 +161,9 @@ const HeatmapOverlayPlugin = {
     }
 
     this._destroyOverlay();
-    const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
-    this._deckOverlay = new OverlayClass({ layers: [this._buildLayer(this._cachedPoints)] });
-    this._deckOverlay.setMap(map);
+    this._overlay = this._createOverlay(this._cachedPoints);
+    this._overlay.setParams(this._currentParams());
+    this._overlay.setMap(map);
 
     this._isActive = true;
     this._api.storage.set('heatmap_active', true);
@@ -183,7 +173,6 @@ const HeatmapOverlayPlugin = {
   },
 
   _deactivate() {
-    if (this._refreshTimer) clearTimeout(this._refreshTimer);
     this._destroyOverlay();
     this._isActive = false;
     this._cachedPoints = null;
@@ -193,69 +182,172 @@ const HeatmapOverlayPlugin = {
     this._api.ui.toast.info('Heatmap disabled');
   },
 
-  // Called by plugin-api on every config change (slider drag, select change).
-  // Reuses cached points — only updates props on the existing overlay.
-  // Debounced at 50 ms so rapid slider movement coalesces into one render.
+  // Config changed (slider drag) — reuse cached points, just re-render.
   _refresh() {
-    if (!this._isActive) return;
-    this._schedule(false, 50);
+    if (!this._isActive || !this._overlay) return;
+    this._overlay.setParams(this._currentParams());
+    this._overlay.render();
   },
 
-  // Called when layer data changes. Invalidates cached points.
-  // Slightly longer debounce since layer events can fire in bursts.
+  // Layer data changed — re-collect points.
   _refreshData() {
-    if (!this._isActive) return;
-    this._cachedPoints = null;
-    this._schedule(true, 100);
+    if (!this._isActive || !this._overlay) return;
+    this._cachedPoints = this._collectPoints();
+    this._overlay.setData(this._cachedPoints);
+    this._showPointLayerMarkers();
+    this._hidePointLayerMarkers();
+    this._overlay.render();
   },
 
-  _schedule(rebuildData, delay) {
-    if (this._refreshTimer) clearTimeout(this._refreshTimer);
-    this._refreshTimer = setTimeout(() => {
-      this._refreshTimer = null;
-      this._applyUpdate(rebuildData);
-    }, delay);
-  },
-
-  _applyUpdate(rebuildData) {
-    const map = this._api.map.getMap();
-    if (!map) return;
-
-    if (rebuildData || !this._cachedPoints) {
-      this._cachedPoints = this._collectPoints();
-      this._showPointLayerMarkers();
-      this._hidePointLayerMarkers();
-    }
-
-    if (!this._cachedPoints.length) return;
-
-    const layer = this._buildLayer(this._cachedPoints);
-
-    if (this._deckOverlay) {
-      // Update the existing WebGL overlay in-place — no context teardown
-      this._deckOverlay.setProps({ layers: [layer] });
-    } else {
-      const OverlayClass = deck.DeckOverlay || deck.GoogleMapsOverlay;
-      this._deckOverlay = new OverlayClass({ layers: [layer] });
-      this._deckOverlay.setMap(map);
-    }
-  },
-
-  _buildLayer(points) {
+  _currentParams() {
     const cfg = this._api.config.get();
-    const colorRange = this._colorRanges[cfg.gradient] || this._colorRanges.default;
-    return new deck.HeatmapLayer({
-      id: 'salesmap-heatmap',
-      data: points,
-      getPosition: d => [d.lng, d.lat],
-      getWeight:   d => d.weight,
-      radiusPixels: cfg.radius    || 30,
-      intensity:    cfg.intensity || 1,
-      threshold:    cfg.threshold || 0.05,
-      colorRange,
-      opacity:      cfg.opacity   || 0.7,
-      aggregation: 'SUM'
+    return {
+      radius:    cfg.radius    || 45,
+      intensity: cfg.intensity || 1,
+      smoothing: cfg.threshold != null ? cfg.threshold : 0.1,
+      opacity:   cfg.opacity   || 0.7,
+      palette:   this._buildPalette(this._colorRanges[cfg.gradient] || this._colorRanges.default)
+    };
+  },
+
+  // Build a 256-entry RGB lookup table from the gradient's colored stops.
+  _buildPalette(stops) {
+    const colored = stops.slice(1); // drop the leading transparent stop
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 1;
+    const ctx = canvas.getContext('2d');
+    const grad = ctx.createLinearGradient(0, 0, 256, 0);
+    colored.forEach((s, i) => {
+      grad.addColorStop(i / (colored.length - 1), `rgb(${s[0]},${s[1]},${s[2]})`);
     });
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 1);
+    return ctx.getImageData(0, 0, 256, 1).data;
+  },
+
+  // Build the OverlayView subclass (must run after google.maps is available).
+  _createOverlay(points) {
+    function makeBrush(radius, blur) {
+      const pad = radius + blur;
+      const c = document.createElement('canvas');
+      c.width = c.height = pad * 2;
+      const cx = c.getContext('2d');
+      const g = cx.createRadialGradient(pad, pad, 0, pad, pad, pad);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      cx.fillStyle = g;
+      cx.fillRect(0, 0, pad * 2, pad * 2);
+      return { canvas: c, pad };
+    }
+
+    class HeatCanvasOverlay extends google.maps.OverlayView {
+      constructor(pts) {
+        super();
+        this._points = pts;
+        this._canvas = null;
+        this._brush = null;
+        this._radius = 45;
+        this._intensity = 1;
+        this._smoothing = 0.1;
+        this._opacity = 0.7;
+        this._palette = null;
+      }
+
+      setData(pts) { this._points = pts; }
+
+      setParams(p) {
+        if (p.radius !== this._radius || p.smoothing !== this._smoothing) {
+          this._brush = null; // brush size depends on radius + blur
+        }
+        this._radius = p.radius;
+        this._intensity = p.intensity;
+        this._smoothing = p.smoothing;
+        this._opacity = p.opacity;
+        this._palette = p.palette;
+        if (this._canvas) this._canvas.style.opacity = this._opacity;
+      }
+
+      onAdd() {
+        const canvas = document.createElement('canvas');
+        canvas.style.position = 'absolute';
+        canvas.style.pointerEvents = 'none';
+        canvas.style.opacity = this._opacity;
+        this._canvas = canvas;
+        this.getPanes().overlayLayer.appendChild(canvas);
+      }
+
+      onRemove() {
+        if (this._canvas && this._canvas.parentNode) {
+          this._canvas.parentNode.removeChild(this._canvas);
+        }
+        this._canvas = null;
+        this._brush = null;
+      }
+
+      draw() { this.render(); }
+
+      render() {
+        const proj = this.getProjection();
+        const map = this.getMap();
+        if (!proj || !this._canvas || !map) return;
+        const bounds = map.getBounds();
+        if (!bounds) return;
+
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+        const trPx = proj.fromLatLngToDivPixel(ne);
+        const blPx = proj.fromLatLngToDivPixel(sw);
+        const left = blPx.x, top = trPx.y;
+        const w = Math.max(1, Math.round(trPx.x - blPx.x));
+        const h = Math.max(1, Math.round(blPx.y - trPx.y));
+
+        const canvas = this._canvas;
+        canvas.style.left = left + 'px';
+        canvas.style.top = top + 'px';
+        canvas.width = w;
+        canvas.height = h;
+
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, w, h);
+
+        const r = this._radius;
+        const blur = Math.max(1, Math.round(r * (0.2 + this._smoothing)));
+        if (!this._brush) this._brush = makeBrush(r, blur);
+        const brush = this._brush;
+        const pad = brush.pad;
+
+        // Per-point alpha: low so dense areas accumulate toward the hot colors,
+        // scaled by the intensity setting.
+        const baseAlpha = Math.min(1, Math.max(0.03, 0.15 * this._intensity));
+
+        for (const pt of this._points) {
+          const dp = proj.fromLatLngToDivPixel(pt.latLng);
+          const x = dp.x - left, y = dp.y - top;
+          if (x < -pad || y < -pad || x > w + pad || y > h + pad) continue;
+          ctx.globalAlpha = baseAlpha;
+          ctx.drawImage(brush.canvas, x - pad, y - pad);
+        }
+        ctx.globalAlpha = 1;
+
+        if (!this._palette) return;
+        const img = ctx.getImageData(0, 0, w, h);
+        const data = img.data;
+        const pal = this._palette;
+        for (let i = 3; i < data.length; i += 4) {
+          const a = data[i];
+          if (a) {
+            const j = a * 4;
+            data[i - 3] = pal[j];
+            data[i - 2] = pal[j + 1];
+            data[i - 1] = pal[j + 2];
+          }
+        }
+        ctx.putImageData(img, 0, 0);
+      }
+    }
+
+    return new HeatCanvasOverlay(points);
   },
 
   _collectPoints() {
@@ -266,7 +358,9 @@ const HeatmapOverlayPlugin = {
       (layer.features || []).forEach(feature => {
         const lat = parseFloat(feature.latitude);
         const lng = parseFloat(feature.longitude);
-        if (!isNaN(lat) && !isNaN(lng)) points.push({ lat, lng, weight: 1 });
+        if (!isNaN(lat) && !isNaN(lng)) {
+          points.push({ latLng: new google.maps.LatLng(lat, lng), weight: 1 });
+        }
       });
     });
     return points;
