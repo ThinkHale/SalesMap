@@ -51,10 +51,11 @@ const MapExport = {
         if (points.length > 0) {
           heatmapData = {
             points,
-            gradient: cfg.gradient || 'fire',
-            radius: cfg.radius || 30,
-            opacity: cfg.opacity || 0.7,
-            maxIntensity: cfg.maxIntensity || 10
+            gradient:  cfg.gradient  || 'fire',
+            radius:    cfg.radius    || 30,
+            opacity:   cfg.opacity   || 0.7,
+            intensity: cfg.intensity || 1,
+            threshold: cfg.threshold || 0.05
           };
         }
       }
@@ -107,11 +108,15 @@ var HEATMAP_GRADIENTS = {
   purple:  { 0.25: '#800080', 0.5: '#f0f', 0.75: '#ff80ff', 1.0: '#fff' },
   heat:    { 0.25: '#00f', 0.5: '#0f0', 0.75: '#ff0', 1.0: '#f00' }
 };
+// Translate deck.gl params to leaflet.heat equivalents:
+// intensity (deck.gl weight multiplier 0.1–5) → max: lower max = more concentrated hotspots
+// threshold (deck.gl fade cutoff 0.01–0.5)    → minOpacity: similar fade-at-edges behaviour
 var heatOpts = {
-  radius: ${heatmapData.radius},
-  max: ${heatmapData.maxIntensity},
-  minOpacity: ${Math.max(0.05, heatmapData.opacity - 0.3)},
-  blur: 15
+  radius:     ${heatmapData.radius},
+  max:        ${(1 / (heatmapData.intensity || 1)).toFixed(3)},
+  minOpacity: ${Math.max(0.02, heatmapData.threshold || 0.05)},
+  blur:       15,
+  opacity:    ${heatmapData.opacity || 0.7}
 };
 var grad = HEATMAP_GRADIENTS[${JSON.stringify(heatmapData.gradient)}];
 if (grad) heatOpts.gradient = grad;
