@@ -328,12 +328,13 @@ class ClusterManager {
 
   // ── Cluster icon renderer ─────────────────────────────────────────────────
 
+  // `size` is the pin width in px; height is derived from the pin aspect ratio.
   _getClusterStyle(count) {
-    if (count < 10)  return { color: '#4CAF50', size: 40 };
-    if (count < 50)  return { color: '#FF9800', size: 50 };
-    if (count < 100) return { color: '#F44336', size: 60 };
-    if (count < 500) return { color: '#9C27B0', size: 70 };
-    return { color: '#E91E63', size: 80 };
+    if (count < 10)  return { color: '#4CAF50', size: 34 };
+    if (count < 50)  return { color: '#FF9800', size: 40 };
+    if (count < 100) return { color: '#F44336', size: 46 };
+    if (count < 500) return { color: '#9C27B0', size: 54 };
+    return { color: '#E91E63', size: 62 };
   }
 
   _lightenColor(hex, pct) {
@@ -349,32 +350,43 @@ class ClusterManager {
     return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
   }
 
+  // Cluster pins reuse the single-marker teardrop shape (AppConfig.marker.pinPath)
+  // scaled up, with the count rendered inside the pin head — so a lone marker and
+  // a cluster read as the same visual family.
+  _buildClusterPinSvg(count) {
+    const { color, size } = this._getClusterStyle(count);
+    const light = this._lightenColor(color, 20);
+    const label = this._formatCount(count);
+    const fontSize = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
+    const w = size;
+    const h = Math.round(size * 46 / 26); // viewBox is 26 wide × 46 tall
+    const uid = `c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+    const pinPath = AppConfig.marker.pinPath;
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="-13 -44 26 46">
+      <defs>
+        <radialGradient id="${uid}" cx="35%" cy="30%">
+          <stop offset="0%" style="stop-color:${light};stop-opacity:1"/>
+          <stop offset="100%" style="stop-color:${color};stop-opacity:1"/>
+        </radialGradient>
+      </defs>
+      <path d="${pinPath}" fill="url(#${uid})" stroke="white" stroke-width="1.5"/>
+      <text x="0" y="-30" text-anchor="middle" dominant-baseline="central" fill="white" font-size="${fontSize}" font-family="Arial,sans-serif" font-weight="bold">${label}</text>
+    </svg>`;
+
+    return { svg, w, h };
+  }
+
   _buildRenderer() {
     return {
       render: ({ count, position }) => {
-        const { color, size } = this._getClusterStyle(count);
-        const light = this._lightenColor(color, 20);
-        const label = this._formatCount(count);
-        const fontSize = size * 0.35;
-        const uid = `c${Date.now().toString(36)}`;
-
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
-          <defs>
-            <radialGradient id="${uid}" cx="35%" cy="35%">
-              <stop offset="0%" style="stop-color:${light};stop-opacity:1"/>
-              <stop offset="100%" style="stop-color:${color};stop-opacity:1"/>
-            </radialGradient>
-          </defs>
-          <circle cx="${size/2}" cy="${size/2}" r="${size/2-2}" fill="url(#${uid})" stroke="white" stroke-width="2"/>
-          <text x="50%" y="50%" text-anchor="middle" dominant-baseline="central" fill="white" font-size="${fontSize}" font-family="Arial,sans-serif" font-weight="bold">${label}</text>
-        </svg>`;
-
+        const { svg, w, h } = this._buildClusterPinSvg(count);
         return new google.maps.Marker({
           position,
           icon: {
             url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-            scaledSize: new google.maps.Size(size, size),
-            anchor: new google.maps.Point(size / 2, size / 2)
+            scaledSize: new google.maps.Size(w, h),
+            anchor: new google.maps.Point(w / 2, h) // tip of the pin
           },
           label: '',
           zIndex: 1000 + count
