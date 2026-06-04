@@ -97,7 +97,12 @@ class MapManager {
     // When clustering is active, the ClusterManager controls marker visibility.
     // Create with map: null so the clusterer can place markers without a flash.
     const cm = AppRegistry.has('clusterManager') ? AppRegistry.get('clusterManager') : null;
-    const useCluster = cm && cm._enabled;
+    const lm = AppRegistry.has('layerManager') ? AppRegistry.get('layerManager') : null;
+    const layerObj = lm?.getLayer(layerId);
+    const useCluster = cm && cm._enabled && (layerObj?.clusterEnabled !== false);
+    const globalPinScale = cm?._settings?.pinScale ?? 1.0;
+    const layerPinScale = layerObj?.pinScale ?? 1.0;
+    const finalPinScale = AppConfig.marker.scale * globalPinScale * layerPinScale;
 
     const marker = new google.maps.Marker({
       position: { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) },
@@ -109,7 +114,7 @@ class MapManager {
         fillOpacity: AppConfig.marker.fillOpacity,
         strokeColor: AppConfig.marker.strokeColor,
         strokeWeight: AppConfig.marker.strokeWeight,
-        scale: AppConfig.marker.scale,
+        scale: finalPinScale,
         anchor: new google.maps.Point(0, 0),
         labelOrigin: new google.maps.Point(0, -30)
       }

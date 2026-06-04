@@ -104,12 +104,15 @@ function renderMap(snapshot) {
 
   var TIER_COLORS = snapshot.tierColors || {};
   var PIN_PATH = snapshot.pinPath || '';
+  var GLOBAL_PIN_SCALE = snapshot.globalPinScale != null ? snapshot.globalPinScale : 1.0;
 
-  function makeIcon(color) {
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="24" height="42">'
+  function makeIcon(color, scale) {
+    var s = scale || 1;
+    var w = Math.round(24 * s), h = Math.round(42 * s);
+    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="' + w + '" height="' + h + '">'
       + '<path d="' + PIN_PATH + '" fill="' + color + '" stroke="white" stroke-width="1.5"/>'
       + '</svg>';
-    return L.divIcon({ html: svg, className: '', iconSize: [24, 42], iconAnchor: [12, 42], popupAnchor: [0, -42] });
+    return L.divIcon({ html: svg, className: '', iconSize: [w, h], iconAnchor: [w/2, h], popupAnchor: [0, -h] });
   }
 
   function makePopupContent(feature) {
@@ -149,8 +152,9 @@ function renderMap(snapshot) {
   }
 
   var cs = snapshot.clusterSettings;
-  function makePointGroup() {
-    if (cs && typeof L.markerClusterGroup === 'function') {
+  var heatActive = !!(snapshot.heatmap && snapshot.heatmap.points && snapshot.heatmap.points.length);
+  function makePointGroup(clustered) {
+    if (clustered && cs && typeof L.markerClusterGroup === 'function') {
       return L.markerClusterGroup({
         maxClusterRadius: cs.gridSize || 60,
         disableClusteringAtZoom: (cs.maxZoom || 16) + 1,
@@ -162,11 +166,15 @@ function renderMap(snapshot) {
     return L.layerGroup();
   }
 
-  var allPointGroups = []; // tracked so the heatmap toggle can restore them
+  var allPointGroups = [];        // groups hidden when the heatmap is toggled on
+  var persistentGroups = [];      // showOnHeatmap groups — stay visible over heat
 
   (snapshot.layers || []).forEach(function(layer) {
     if (!layer.visible) return;
-    var layerGroup = makePointGroup();
+    var layerClusters = layer.clusterEnabled !== false;
+    var layerScale = GLOBAL_PIN_SCALE * (layer.pinScale != null ? layer.pinScale : 1);
+    var pinsOnHeat = !!layer.showOnHeatmap;
+    var layerGroup = makePointGroup(layerClusters);
     (layer.features || []).forEach(function(feature) {
       if (feature.wkt) {
         try {
@@ -185,12 +193,13 @@ function renderMap(snapshot) {
         var color = tierColor || layer.color || '#0078d4';
         L.marker(
           [parseFloat(feature.latitude), parseFloat(feature.longitude)],
-          { icon: makeIcon(color), title: feature.name || '' }
+          { icon: makeIcon(color, layerScale), title: feature.name || '' }
         ).bindPopup(makePopupContent(feature)).addTo(layerGroup);
       }
     });
     layerGroup.addTo(map);
-    allPointGroups.push(layerGroup);
+    if (pinsOnHeat) persistentGroups.push(layerGroup);
+    else allPointGroups.push(layerGroup);
   });
 
   if (snapshot.heatmap && snapshot.heatmap.points && snapshot.heatmap.points.length) {

@@ -23,7 +23,8 @@ class ClusterManager {
       minClusterSize: 2,
       maxZoom: 16,
       spiderfy: true,
-      spiderfyMaxMarkers: 10
+      spiderfyMaxMarkers: 10,
+      pinScale: 1.0
     };
   }
 
@@ -41,13 +42,22 @@ class ClusterManager {
     } catch (e) {}
   }
 
+  // A layer is clustered only when the global toggle is on AND the layer hasn't
+  // opted out via its per-layer clusterEnabled override.
+  _layerClusters(layerId) {
+    if (!this._enabled) return false;
+    const layer = AppRegistry.has('layerManager')
+      ? AppRegistry.get('layerManager').getLayer(layerId) : null;
+    return !layer || layer.clusterEnabled !== false;
+  }
+
   addMarkersToCluster(layerId, markers) {
     if (!markers || markers.length === 0) return;
 
     if (!this._markers.has(layerId)) this._markers.set(layerId, []);
     this._markers.get(layerId).push(...markers);
 
-    if (!this._enabled) {
+    if (!this._layerClusters(layerId)) {
       // Ensure viewport culling is active even when clustering started disabled on load.
       this._setupIdleListener();
       this._showMarkersInViewport(markers);
@@ -231,9 +241,10 @@ class ClusterManager {
       if (clusterer) try { clusterer.clearMarkers(); } catch (e) {}
       this._clusteredSets.delete(layerId);
       markers.forEach(m => m.setMap(null));
-    } else if (this._enabled) {
+    } else if (this._layerClusters(layerId)) {
       this._rebuildClusterer(layerId, markers);
     } else {
+      this._setupIdleListener();
       this._showMarkersInViewport(markers);
     }
   }
@@ -251,9 +262,10 @@ class ClusterManager {
     const visible = layerData ? layerData.visible : true;
     if (!visible) return;
     const markers = this._markers.get(layerId) || [];
-    if (this._enabled) {
+    if (this._layerClusters(layerId)) {
       this._rebuildClusterer(layerId, markers);
     } else {
+      this._setupIdleListener();
       this._showMarkersInViewport(markers);
     }
   }
@@ -272,13 +284,17 @@ class ClusterManager {
       this._refreshUnclustered();
       this._setupIdleListener();
     } else {
-      this._removeIdleListener();
       this._markers.forEach((markers, layerId) => {
         const layerData = this._mapManager?.getLayerData(layerId);
         const visible = layerData ? layerData.visible : true;
         if (!visible) return;
         markers.forEach(m => m.setMap(null));
-        this._rebuildClusterer(layerId, markers);
+        if (this._layerClusters(layerId)) {
+          this._rebuildClusterer(layerId, markers);
+        } else {
+          this._setupIdleListener();
+          this._showMarkersInViewport(markers);
+        }
       });
     }
   }
@@ -289,10 +305,8 @@ class ClusterManager {
     if (this._idleListener) return;
     let _cullingTimer;
     this._idleListener = google.maps.event.addListener(this._map, 'bounds_changed', () => {
-      if (!this._enabled) {
-        clearTimeout(_cullingTimer);
-        _cullingTimer = setTimeout(() => this._refreshUnclustered(), 100);
-      }
+      clearTimeout(_cullingTimer);
+      _cullingTimer = setTimeout(() => this._refreshUnclustered(), 100);
     });
   }
 
@@ -306,6 +320,8 @@ class ClusterManager {
   _refreshUnclustered() {
     const bounds = this._map.getBounds();
     this._markers.forEach((markers, layerId) => {
+      // Clustered layers are managed by their clusterer — don't cull them here.
+      if (this._layerClusters(layerId)) return;
       const layerData = this._mapManager?.getLayerData(layerId);
       const layerVisible = layerData ? layerData.visible : true;
       markers.forEach(m => {
@@ -395,6 +411,56 @@ class ClusterManager {
     };
   }
 
+  setGridSize(px) {
+    this._settings.gridSize = px;
+    this._saveSettings();
+    this._reclusterAll();
+  }
+
+  setMaxZoom(z) {
+    this._settings.maxZoom = z;
+    this._saveSettings();
+    this._reclusterAll();
+  }
+
+  setMinClusterSize(n) {
+    this._settings.minClusterSize = n;
+    this._saveSettings();
+    this._reclusterAll();
+  }
+
+  setPinScale(scale) {
+    this._settings.pinScale = scale;
+    this._saveSettings();
+    // Pin scale lives on the marker icons, so every layer must be re-rendered.
+    const lm = AppRegistry.has('layerManager') ? AppRegistry.get('layerManager') : null;
+    if (lm) lm.getAllLayers().forEach(l => lm.refreshLayerDisplay(l.id));
+  }
+
+  // Tear down every clusterer and rebuild from the source-of-truth markers so a
+  // settings change (gridSize/maxZoom/minClusterSize) takes effect immediately.
+  _reclusterAll() {
+    if (!this._enabled) return;
+    this._markers.forEach((markers, layerId) => {
+      const layerData = this._mapManager?.getLayerData(layerId);
+      const visible = layerData ? layerData.visible : true;
+      if (!visible) return;
+      markers.forEach(m => m.setMap(null));
+      this._rebuildClusterer(layerId, markers);
+    });
+  }
+
+  getSettings() { return { ...this._settings, enabled: this._enabled }; }
+
+  resetSettings() {
+    const d = this._defaultSettings();
+    this._settings = { ...d, enabled: this._enabled };
+    this._saveSettings();
+    this.setPinScale(d.pinScale);
+    this._reclusterAll();
+  }
+
+  // Small inline toggle for the layers toolbar.
   renderSettingsPanel() {
     const panel = Utils.createElement('div', { className: 'cluster-settings' });
 
@@ -403,21 +469,93 @@ class ClusterManager {
     cb.checked = this._enabled;
     cb.addEventListener('change', () => this.setEnabled(cb.checked));
     toggle.appendChild(cb);
-    toggle.appendChild(document.createTextNode(' Enable marker clustering'));
+    toggle.appendChild(document.createTextNode(' Cluster'));
     panel.appendChild(toggle);
 
-    const spiderRow = Utils.createElement('label', { className: 'settings-toggle' });
-    spiderRow.style.cssText = 'margin-top:8px;display:block';
+    return panel;
+  }
+
+  // Full settings UI rendered into the Plugins-modal drawer.
+  renderSettingsDrawer() {
+    const wrap = Utils.createElement('div', { className: 'cluster-settings-drawer' });
+
+    const slider = (label, key, min, max, step, decimals, getVal, onInput) => {
+      const group = Utils.createElement('div', { className: 'form-group' });
+      const row = Utils.createElement('div', { className: 'styler-slider-label-row' });
+      const lbl = Utils.createElement('label', { className: 'form-label' }, label);
+      const val = Utils.createElement('span', { className: 'styler-slider-value' });
+      const fmt = v => Number(v).toFixed(decimals);
+      val.textContent = fmt(getVal());
+      row.appendChild(lbl);
+      row.appendChild(val);
+      const input = Utils.createElement('input', { type: 'range', className: 'styler-slider' });
+      input.min = min; input.max = max; input.step = step; input.value = getVal();
+      input.addEventListener('input', () => {
+        val.textContent = fmt(input.value);
+        onInput(parseFloat(input.value));
+      });
+      group.appendChild(row);
+      group.appendChild(input);
+      wrap.appendChild(group);
+      return input;
+    };
+
+    // Enable clustering
+    const enableGroup = Utils.createElement('div', { className: 'form-group' });
+    const enableToggle = Utils.createElement('label', { className: 'settings-toggle' });
+    const enableCb = Utils.createElement('input', { type: 'checkbox' });
+    enableCb.checked = this._enabled;
+    enableCb.addEventListener('change', () => this.setEnabled(enableCb.checked));
+    enableToggle.appendChild(enableCb);
+    enableToggle.appendChild(document.createTextNode(' Enable marker clustering'));
+    enableGroup.appendChild(enableToggle);
+    wrap.appendChild(enableGroup);
+
+    // Pin size (global)
+    slider('Pin Size (×)', 'pinScale', 0.4, 2.5, 0.1, 1,
+      () => this._settings.pinScale ?? 1.0,
+      v => this.setPinScale(v));
+
+    // Cluster radius (gridSize)
+    slider('Cluster Radius (px)', 'gridSize', 20, 160, 5, 0,
+      () => this._settings.gridSize ?? 60,
+      v => this.setGridSize(v));
+
+    // Max zoom to cluster
+    slider('Cluster Up To Zoom', 'maxZoom', 4, 20, 1, 0,
+      () => this._settings.maxZoom ?? 16,
+      v => this.setMaxZoom(v));
+
+    // Min cluster size
+    slider('Min Markers Per Cluster', 'minClusterSize', 2, 10, 1, 0,
+      () => this._settings.minClusterSize ?? 2,
+      v => this.setMinClusterSize(v));
+
+    // Spiderfy
+    const spiderGroup = Utils.createElement('div', { className: 'form-group' });
+    const spiderToggle = Utils.createElement('label', { className: 'settings-toggle' });
     const spiderCb = Utils.createElement('input', { type: 'checkbox' });
     spiderCb.checked = this._settings.spiderfy;
     spiderCb.addEventListener('change', () => {
       this._settings.spiderfy = spiderCb.checked;
       this._saveSettings();
     });
-    spiderRow.appendChild(spiderCb);
-    spiderRow.appendChild(document.createTextNode(' Spider-out small clusters'));
-    panel.appendChild(spiderRow);
+    spiderToggle.appendChild(spiderCb);
+    spiderToggle.appendChild(document.createTextNode(' Spider-out small clusters on click'));
+    spiderGroup.appendChild(spiderToggle);
+    wrap.appendChild(spiderGroup);
 
-    return panel;
+    // Reset
+    const resetBtn = Utils.createElement('button', { className: 'btn btn-secondary btn-sm' }, 'Reset to Defaults');
+    resetBtn.style.marginTop = '10px';
+    resetBtn.addEventListener('click', () => {
+      this.resetSettings();
+      // Re-render the drawer to reflect reset values
+      const parent = wrap.parentNode;
+      if (parent) { parent.innerHTML = ''; parent.appendChild(this.renderSettingsDrawer()); }
+    });
+    wrap.appendChild(resetBtn);
+
+    return wrap;
   }
 }

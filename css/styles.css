@@ -729,6 +729,11 @@ textarea.form-control { resize: vertical; }
 .styler-slider-value { font-size: 12px; font-weight: 600; color: #0078d4; }
 .styler-slider { width: 100%; height: 4px; accent-color: #0078d4; cursor: pointer; }
 
+.cluster-settings-drawer .form-group,
+.layer-settings-drawer .form-group { margin-bottom: 16px; }
+.cluster-settings-drawer .settings-toggle,
+.layer-settings-drawer .settings-toggle { border: none; padding: 0; background: transparent; font-size: 13px; }
+
 .styler-note { font-size: 11px; color: #605e5c; margin-bottom: 6px; }
 .styler-value-map { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .styler-value-row { display: flex; align-items: center; gap: 8px; }

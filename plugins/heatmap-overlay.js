@@ -371,6 +371,8 @@ const HeatmapOverlayPlugin = {
     this._hiddenLayerIds = [];
     layers.forEach(layer => {
       if (!layer.visible || layer.type === 'polygon') return;
+      // Layers flagged showOnHeatmap keep their pins visible above the heat canvas.
+      if (layer.showOnHeatmap) return;
       this._api.map.hideLayerMarkers(layer.id);
       this._hiddenLayerIds.push(layer.id);
     });
