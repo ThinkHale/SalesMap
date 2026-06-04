@@ -39,10 +39,14 @@ const MapShare = {
       }
     }
 
+    // Cluster settings are emitted even alongside a heatmap so that layers flagged
+    // showOnHeatmap still cluster their pins on top of the heat layer.
     let clusterSettings = null;
-    if (!heatmap && AppRegistry.has('clusterManager')) {
+    let globalPinScale = 1.0;
+    if (AppRegistry.has('clusterManager')) {
       const cm = AppRegistry.get('clusterManager');
       const s = cm._settings || cm._defaultSettings();
+      globalPinScale = s.pinScale ?? 1.0;
       if (s.enabled !== false && cm._enabled !== false) {
         clusterSettings = {
           maxZoom:  s.maxZoom  ?? 16,
@@ -60,10 +64,14 @@ const MapShare = {
         type: l.type,
         color: l.color,
         visible: l.visible,
+        pinScale: l.pinScale ?? 1.0,
+        showOnHeatmap: !!l.showOnHeatmap,
+        clusterEnabled: l.clusterEnabled !== false,
         features: (l.features || []).map(f => ({ ...f }))
       })),
       tierColors: AppConfig.colors.tierMap,
       pinPath: AppConfig.marker.pinPath,
+      globalPinScale,
       heatmap,
       clusterSettings,
       createdAt: new Date().toISOString()

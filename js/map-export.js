@@ -29,6 +29,9 @@ const MapExport = {
       type: l.type,
       color: l.color,
       visible: l.visible,
+      pinScale: l.pinScale ?? 1.0,
+      showOnHeatmap: !!l.showOnHeatmap,
+      clusterEnabled: l.clusterEnabled !== false,
       features: (l.features || []).map(f => ({ ...f }))
     })));
 
@@ -62,11 +65,15 @@ const MapExport = {
       }
     }
 
-    // Read current cluster settings so the export matches the live view
+    // Read current cluster settings so the export matches the live view. Cluster
+    // settings are emitted even in heatmap mode so that layers flagged
+    // showOnHeatmap still cluster their pins on top of the heat layer.
     let clusterSettings = null;
-    if (!heatmapData && AppRegistry.has('clusterManager')) {
+    let globalPinScale = 1.0;
+    if (AppRegistry.has('clusterManager')) {
       const cm = AppRegistry.get('clusterManager');
       const s = cm._settings || cm._defaultSettings();
+      globalPinScale = s.pinScale ?? 1.0;
       if (s.enabled !== false && cm._enabled !== false) {
         clusterSettings = {
           maxZoom:        s.maxZoom        ?? 16,
@@ -85,7 +92,7 @@ const MapExport = {
       clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js') : Promise.resolve(null)
     ]);
 
-    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, clusterSettings, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS });
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, clusterSettings, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS }, globalPinScale);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -99,7 +106,7 @@ const MapExport = {
     toastManager.success('Map exported successfully');
   },
 
-  _buildExportHTML(layerDataJSON, center, zoom, heatmapData, clusterSettings, assets = {}) {
+  _buildExportHTML(layerDataJSON, center, zoom, heatmapData, clusterSettings, assets = {}, globalPinScale = 1.0) {
     const title = Utils.escapeHtml('SalesMap Export — ' + new Date().toLocaleDateString());
     const pinPath = AppConfig.marker.pinPath;
 
@@ -197,6 +204,7 @@ const TIER_COLORS = ${JSON.stringify(AppConfig.colors.tierMap)};
 const PIN_PATH = ${JSON.stringify(pinPath)};
 const HEATMAP_MODE = ${heatmapData ? 'true' : 'false'};
 const CLUSTER_SETTINGS = ${clusterSettings ? JSON.stringify(clusterSettings) : 'null'};
+const GLOBAL_PIN_SCALE = ${Number(globalPinScale) || 1.0};
 
 const map = L.map('map').setView([${center.lat}, ${center.lng}], ${zoom});
 
@@ -230,11 +238,13 @@ var LegendControl = L.Control.extend({
 });
 new LegendControl({ position: 'bottomleft' }).addTo(map);
 
-function makeIcon(color) {
-  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="24" height="42">'
+function makeIcon(color, scale) {
+  var s = scale || 1;
+  var w = Math.round(24 * s), h = Math.round(42 * s);
+  var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="' + w + '" height="' + h + '">'
     + '<path d="' + PIN_PATH + '" fill="' + color + '" stroke="white" stroke-width="1.5"/>'
     + '</svg>';
-  return L.divIcon({ html: svg, className: '', iconSize: [24, 42], iconAnchor: [12, 42], popupAnchor: [0, -42] });
+  return L.divIcon({ html: svg, className: '', iconSize: [w, h], iconAnchor: [w/2, h], popupAnchor: [0, -h] });
 }
 
 function makePopupContent(feature) {
@@ -290,8 +300,13 @@ function makeClusterIcon(cluster) {
 LAYER_DATA.forEach(function(layer) {
   if (!layer.visible) return;
 
-  // One cluster group per point layer (polygons go straight to map)
-  var clusterGroup = (!HEATMAP_MODE && CLUSTER_SETTINGS && typeof L.markerClusterGroup === 'function')
+  // In heatmap mode, only layers flagged showOnHeatmap render their pins on top.
+  var renderPins = !HEATMAP_MODE || layer.showOnHeatmap;
+  var layerScale = GLOBAL_PIN_SCALE * (layer.pinScale != null ? layer.pinScale : 1);
+  var layerClusters = CLUSTER_SETTINGS && layer.clusterEnabled !== false;
+
+  // One cluster group per clustered point layer (polygons go straight to map)
+  var clusterGroup = (layerClusters && typeof L.markerClusterGroup === 'function')
     ? L.markerClusterGroup({
         maxClusterRadius: CLUSTER_SETTINGS.gridSize,
         disableClusteringAtZoom: CLUSTER_SETTINGS.maxZoom + 1,
@@ -317,12 +332,12 @@ LAYER_DATA.forEach(function(layer) {
           }).bindPopup(makePopupContent(feature)).addTo(map);
         }
       } catch(e) {}
-    } else if (!HEATMAP_MODE && feature.latitude && feature.longitude) {
+    } else if (renderPins && feature.latitude && feature.longitude) {
       var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
       var color = tierColor || layer.color || '#0078d4';
       var marker = L.marker(
         [parseFloat(feature.latitude), parseFloat(feature.longitude)],
-        { icon: makeIcon(color), title: feature.name || '' }
+        { icon: makeIcon(color, layerScale), title: feature.name || '' }
       ).bindPopup(makePopupContent(feature));
       if (clusterGroup) {
         clusterGroup.addLayer(marker);

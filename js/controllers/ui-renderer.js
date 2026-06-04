@@ -305,6 +305,7 @@ const UIRenderer = {
     const items = [
       { label: 'Rename', action: () => this._promptRenameLayer(layer, layerManager) },
       { label: 'Style Layer', action: () => eventBus.emit('layer.styler.open', { layerId: layer.id }) },
+      { label: 'Layer Settings', action: () => this._showLayerSettings(layer, layerManager) },
       { label: 'Zoom to Layer', action: () => layerManager.fitToLayer(layer.id) },
       { label: 'Set as Draw Target', action: () => { sm.set('targetLayerForNewFeature', layer.id); this.renderLayerTree(); toastManager.info(`Draw target: "${layer.name}"`); } },
       { label: 'Toggle Labels', action: () => this._toggleLayerLabels(layer, layerManager) },
@@ -358,6 +359,72 @@ const UIRenderer = {
     });
 
     contextMenuManager.show('groupContextMenu', e.clientX, e.clientY);
+  },
+
+  // Per-layer overrides: pin size, show-on-heatmap, and cluster opt-out.
+  _showLayerSettings(layer, layerManager) {
+    drawerManager.open(body => {
+      body.innerHTML = '';
+      const wrap = Utils.createElement('div', { className: 'layer-settings-drawer' });
+
+      // Pin size override
+      const pinGroup = Utils.createElement('div', { className: 'form-group' });
+      const pinRow = Utils.createElement('div', { className: 'styler-slider-label-row' });
+      pinRow.appendChild(Utils.createElement('label', { className: 'form-label' }, 'Pin Size (×)'));
+      const pinVal = Utils.createElement('span', { className: 'styler-slider-value' });
+      const curScale = layer.pinScale ?? 1.0;
+      pinVal.textContent = Number(curScale).toFixed(1);
+      pinRow.appendChild(pinVal);
+      const pinInput = Utils.createElement('input', { type: 'range', className: 'styler-slider' });
+      pinInput.min = 0.4; pinInput.max = 2.5; pinInput.step = 0.1; pinInput.value = curScale;
+      pinInput.addEventListener('input', () => {
+        pinVal.textContent = Number(pinInput.value).toFixed(1);
+        layer.pinScale = parseFloat(pinInput.value);
+        layerManager.refreshLayerDisplay(layer.id);
+      });
+      pinGroup.appendChild(pinRow);
+      pinGroup.appendChild(pinInput);
+      wrap.appendChild(pinGroup);
+
+      // Show on heatmap
+      const heatGroup = Utils.createElement('div', { className: 'form-group' });
+      const heatToggle = Utils.createElement('label', { className: 'settings-toggle' });
+      const heatCb = Utils.createElement('input', { type: 'checkbox' });
+      heatCb.checked = !!layer.showOnHeatmap;
+      heatCb.addEventListener('change', () => {
+        layer.showOnHeatmap = heatCb.checked;
+        // Re-apply heatmap visibility if it's currently active.
+        const def = AppRegistry.has('pluginRegistry')
+          ? AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay') : null;
+        if (def && def._isActive) { def._refreshData(); }
+      });
+      heatToggle.appendChild(heatCb);
+      heatToggle.appendChild(document.createTextNode(' Show this layer\'s pins on top of heatmap'));
+      heatGroup.appendChild(heatToggle);
+      wrap.appendChild(heatGroup);
+
+      // Cluster this layer
+      const clusGroup = Utils.createElement('div', { className: 'form-group' });
+      const clusToggle = Utils.createElement('label', { className: 'settings-toggle' });
+      const clusCb = Utils.createElement('input', { type: 'checkbox' });
+      clusCb.checked = layer.clusterEnabled !== false;
+      clusCb.addEventListener('change', () => {
+        layer.clusterEnabled = clusCb.checked;
+        layerManager.refreshLayerDisplay(layer.id);
+      });
+      clusToggle.appendChild(clusCb);
+      clusToggle.appendChild(document.createTextNode(' Cluster this layer\'s markers'));
+      clusGroup.appendChild(clusToggle);
+      wrap.appendChild(clusGroup);
+
+      const note = Utils.createElement('div', { className: 'plugin-desc' },
+        'These overrides apply on top of the global Marker Clustering settings and are saved with your workspace.');
+      note.style.marginTop = '10px';
+      wrap.appendChild(note);
+
+      body.appendChild(wrap);
+    }, `${layer.name} — Settings`);
+    AppRegistry.require('syncController')?.scheduleSave?.();
   },
 
   _promptRenameLayer(layer, layerManager) {
@@ -654,6 +721,36 @@ const UIRenderer = {
     if (statuses.length === 0) {
       container.appendChild(Utils.createElement('p', { className: 'no-plugins-msg' }, 'No plugins loaded.'));
       return;
+    }
+
+    // Core "Marker Clustering" card — clustering is a built-in service, not a
+    // plugin, but it's surfaced here so its styling/behavior settings live
+    // alongside the other map plugins.
+    if (AppRegistry.has('clusterManager')) {
+      const cm = AppRegistry.get('clusterManager');
+      const cEnabled = cm.getSettings().enabled;
+      const card = Utils.createElement('div', { className: `plugin-card ${cEnabled ? 'enabled' : 'disabled'}` });
+      const ch = Utils.createElement('div', { className: 'plugin-card-header' });
+      ch.appendChild(Utils.createElement('span', { className: 'plugin-name' }, 'Marker Clustering'));
+      ch.appendChild(Utils.createElement('span', { className: 'plugin-version' }, 'core'));
+      card.appendChild(ch);
+      card.appendChild(Utils.createElement('div', { className: 'plugin-desc' },
+        'Groups nearby markers into clusters. Adjust pin size, cluster radius, zoom behavior, and spiderfy.'));
+      const cActions = Utils.createElement('div', { className: 'plugin-actions' });
+      const cSettingsBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, 'Settings');
+      cSettingsBtn.addEventListener('click', () => {
+        drawerManager.open(body => body.appendChild(cm.renderSettingsDrawer()), 'Marker Clustering Settings');
+        modalManager.close('pluginsModal');
+      });
+      const cToggleBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, cEnabled ? 'Disable' : 'Enable');
+      cToggleBtn.addEventListener('click', () => {
+        cm.setEnabled(!cEnabled);
+        this.renderPluginsModal();
+      });
+      cActions.appendChild(cSettingsBtn);
+      cActions.appendChild(cToggleBtn);
+      card.appendChild(cActions);
+      container.appendChild(card);
     }
 
     statuses.forEach(({ id, name, version, enabled }) => {

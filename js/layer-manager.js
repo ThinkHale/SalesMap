@@ -27,6 +27,9 @@ class LayerManager {
       styleType: options.styleType || null,
       styleProperty: options.styleProperty || null,
       showLabels: options.showLabels || false,
+      pinScale: options.pinScale !== undefined ? options.pinScale : 1.0,
+      showOnHeatmap: options.showOnHeatmap || false,
+      clusterEnabled: options.clusterEnabled !== false,
       metadata: { ...metadata },
       createdAt: options.createdAt || Utils.formatDate()
     };
@@ -383,6 +386,15 @@ class LayerManager {
     }
     stateManager.set('layerOrder', order, true);
     eventBus.emit('layers.updated', { source: 'reorder' });
+  }
+
+  refreshLayerDisplay(layerId) {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    this._mapManager.clearLayer(layerId);
+    this._mapManager.addFeaturesToLayer(layerId, layer.features, layer.type, layer.color);
+    this._restoreLayerState(layer);
+    eventBus.emit('layer.refreshed', { layerId });
   }
 
   fitToLayer(layerId) {
