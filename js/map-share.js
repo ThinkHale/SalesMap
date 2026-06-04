@@ -11,32 +11,44 @@ const MapShare = {
       : { lat: AppConfig.map.defaultCenter.lat, lng: AppConfig.map.defaultCenter.lng };
     const zoom = mapManager ? mapManager.map.getZoom() : AppConfig.map.defaultZoom;
 
-    const heatPoints = [];
-    layers.forEach(layer => {
-      if (!layer.visible || layer.type === 'polygon') return;
-      (layer.features || []).forEach(feature => {
-        const lat = parseFloat(feature.latitude);
-        const lng = parseFloat(feature.longitude);
-        if (!isNaN(lat) && !isNaN(lng)) heatPoints.push([lat, lng, 1]);
-      });
-    });
-
     let heatmap = null;
-    if (heatPoints.length > 0) {
-      let cfg = { gradient: 'fire', radius: 30, opacity: 0.7, maxIntensity: 10 };
-      if (AppRegistry.has('pluginRegistry')) {
-        const pluginDef = AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay');
-        if (pluginDef && pluginDef._api) {
-          const pluginCfg = pluginDef._api.config.get();
-          cfg = {
-            gradient: pluginCfg.gradient || 'fire',
-            radius: pluginCfg.radius || 30,
-            opacity: pluginCfg.opacity || 0.7,
-            maxIntensity: pluginCfg.maxIntensity || 10
+    if (AppRegistry.has('pluginRegistry')) {
+      const pluginDef = AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay');
+      // Only include heatmap data when it is actually active
+      if (pluginDef && pluginDef._isActive && pluginDef._api) {
+        const cfg = pluginDef._api.config.get();
+        const points = [];
+        layers.forEach(layer => {
+          if (!layer.visible || layer.type === 'polygon') return;
+          (layer.features || []).forEach(feature => {
+            const lat = parseFloat(feature.latitude);
+            const lng = parseFloat(feature.longitude);
+            if (!isNaN(lat) && !isNaN(lng)) points.push([lat, lng, 1]);
+          });
+        });
+        if (points.length > 0) {
+          heatmap = {
+            points,
+            colorRange: pluginDef._colorRanges[cfg.gradient] || pluginDef._colorRanges.default,
+            radius:    cfg.radius    || 30,
+            opacity:   cfg.opacity   || 0.7,
+            intensity: cfg.intensity || 1,
+            threshold: cfg.threshold || 0.05
           };
         }
       }
-      heatmap = { points: heatPoints, ...cfg };
+    }
+
+    let clusterSettings = null;
+    if (!heatmap && AppRegistry.has('clusterManager')) {
+      const cm = AppRegistry.get('clusterManager');
+      const s = cm._settings || cm._defaultSettings();
+      if (s.enabled !== false && cm._enabled !== false) {
+        clusterSettings = {
+          maxZoom:  s.maxZoom  ?? 16,
+          gridSize: s.gridSize ?? 60
+        };
+      }
     }
 
     const snapshot = {
@@ -53,6 +65,7 @@ const MapShare = {
       tierColors: AppConfig.colors.tierMap,
       pinPath: AppConfig.marker.pinPath,
       heatmap,
+      clusterSettings,
       createdAt: new Date().toISOString()
     };
 
