@@ -414,6 +414,27 @@ class PluginManager {
           if (p.config[key] === opt) option.selected = true;
           input.appendChild(option);
         });
+      } else if (schema.type === 'range') {
+        const val = p.config[key] !== undefined ? p.config[key] : schema.default;
+        const decimals = schema.decimals !== undefined ? schema.decimals : 0;
+        const labelRow = Utils.createElement('div', { className: 'styler-slider-label-row' });
+        const labelText = Utils.createElement('span');
+        labelText.textContent = schema.label || key;
+        const valueDisplay = Utils.createElement('span', { className: 'styler-slider-value' });
+        valueDisplay.textContent = parseFloat(val).toFixed(decimals);
+        labelRow.appendChild(labelText);
+        labelRow.appendChild(valueDisplay);
+        label.replaceWith(labelRow);
+        input = Utils.createElement('input', {
+          type: 'range', name: key, className: 'styler-slider',
+          min: schema.min !== undefined ? schema.min : 0,
+          max: schema.max !== undefined ? schema.max : 1,
+          step: schema.step !== undefined ? schema.step : 'any'
+        });
+        input.value = val;
+        input.addEventListener('input', () => {
+          valueDisplay.textContent = parseFloat(input.value).toFixed(decimals);
+        });
       } else if (schema.type === 'number') {
         input = Utils.createElement('input', {
           type: 'number', name: key,
@@ -439,7 +460,7 @@ class PluginManager {
         const schema = p.def.configSchema[inp.name];
         if (!schema) return;
         if (schema.type === 'boolean') p.api.config.set(inp.name, inp.checked);
-        else if (schema.type === 'number') p.api.config.set(inp.name, parseFloat(inp.value));
+        else if (schema.type === 'number' || schema.type === 'range') p.api.config.set(inp.name, parseFloat(inp.value));
         else p.api.config.set(inp.name, inp.value);
       });
       toastManager.success('Plugin settings saved');

@@ -29,25 +29,40 @@ const HeatmapOverlayPlugin = {
       label: 'Color Gradient'
     },
     radius: {
-      type: 'number',
+      type: 'range',
       default: 30,
       min: 5,
-      max: 120,
+      max: 200,
+      step: 5,
+      decimals: 0,
       label: 'Radius (px)'
     },
+    intensity: {
+      type: 'range',
+      default: 1,
+      min: 0.1,
+      max: 5,
+      step: 0.1,
+      decimals: 1,
+      label: 'Intensity'
+    },
+    threshold: {
+      type: 'range',
+      default: 0.05,
+      min: 0.01,
+      max: 0.5,
+      step: 0.01,
+      decimals: 2,
+      label: 'Threshold (fade cutoff)'
+    },
     opacity: {
-      type: 'number',
+      type: 'range',
       default: 0.7,
       min: 0.1,
       max: 1.0,
+      step: 0.05,
+      decimals: 2,
       label: 'Opacity'
-    },
-    maxIntensity: {
-      type: 'number',
-      default: 10,
-      min: 1,
-      max: 100,
-      label: 'Max Intensity'
     }
   },
 
@@ -73,6 +88,10 @@ const HeatmapOverlayPlugin = {
 
     const savedRadius = api.config.get('radius');
     if (savedRadius === 20 || savedRadius === 40) api.config.set('radius', 30);
+    // Migrate old maxIntensity key → intensity
+    if (api.config.get('maxIntensity') !== undefined && api.config.get('intensity') === undefined) {
+      api.config.set('intensity', 1);
+    }
 
     this._controlBtn = api.ui.addToolbarButton({
       label: '🌡',
@@ -190,11 +209,11 @@ const HeatmapOverlayPlugin = {
       data: points,
       getPosition: d => [d.lng, d.lat],
       getWeight:   d => d.weight,
-      radiusPixels:  cfg.radius || 30,
-      intensity:     1,
-      threshold:     0.05,
+      radiusPixels: cfg.radius    || 30,
+      intensity:    cfg.intensity || 1,
+      threshold:    cfg.threshold || 0.05,
       colorRange,
-      opacity: cfg.opacity || 0.7,
+      opacity:      cfg.opacity   || 0.7,
       aggregation: 'SUM'
     });
 
