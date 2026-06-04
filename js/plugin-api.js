@@ -468,14 +468,37 @@ class PluginManager {
     saveBtn.addEventListener('click', () => {
       // Flush any non-live fields (number, text) and confirm
       form.querySelectorAll('input, select').forEach(inp => {
-        if (!inp.name || inp.type === 'range' || inp.type === 'checkbox' ) return;
+        if (!inp.name || inp.type === 'range' || inp.type === 'checkbox') return;
         const schema = p.def.configSchema[inp.name];
         if (!schema) return;
         liveApply(inp.name, schema, () => inp.value);
       });
       toastManager.success('Plugin settings saved');
     });
-    form.appendChild(saveBtn);
+
+    const resetBtn = Utils.createElement('button', { className: 'btn btn-sm', style: 'margin-left:6px' }, 'Reset to Defaults');
+    resetBtn.addEventListener('click', () => {
+      Object.entries(p.def.configSchema).forEach(([key, schema]) => {
+        if (schema.default === undefined) return;
+        p.api.config.set(key, schema.default);
+        // Update the matching form control so the UI reflects the reset value
+        const inp = form.querySelector(`[name="${key}"]`);
+        if (!inp) return;
+        if (inp.type === 'checkbox') {
+          inp.checked = !!schema.default;
+        } else {
+          inp.value = schema.default;
+          inp.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+      });
+      if (p.def._isActive && typeof p.def._refresh === 'function') p.def._refresh.call(p.def);
+      toastManager.info('Settings reset to defaults');
+    });
+
+    const btnRow = Utils.createElement('div', { style: 'display:flex;align-items:center;margin-top:4px' });
+    btnRow.appendChild(saveBtn);
+    btnRow.appendChild(resetBtn);
+    form.appendChild(btnRow);
     return form;
   }
 }
