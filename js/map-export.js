@@ -62,14 +62,30 @@ const MapExport = {
       }
     }
 
-    const [leafletCSS, leafletJS, wellknownJS, leafletHeatJS] = await Promise.all([
+    // Read current cluster settings so the export matches the live view
+    let clusterSettings = null;
+    if (!heatmapData && AppRegistry.has('clusterManager')) {
+      const cm = AppRegistry.get('clusterManager');
+      const s = cm._settings || cm._defaultSettings();
+      if (s.enabled !== false && cm._enabled !== false) {
+        clusterSettings = {
+          maxZoom:        s.maxZoom        ?? 16,
+          minClusterSize: s.minClusterSize ?? 2,
+          gridSize:       s.gridSize       ?? 60
+        };
+      }
+    }
+
+    const [leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS] = await Promise.all([
       this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'),
       this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'),
       this._fetchInline('https://unpkg.com/wellknown@0.5.0/wellknown.js'),
-      heatmapData ? this._fetchInline('https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js') : Promise.resolve(null)
+      heatmapData ? this._fetchInline('https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js') : Promise.resolve(null),
+      clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css') : Promise.resolve(null),
+      clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js') : Promise.resolve(null)
     ]);
 
-    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS });
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, clusterSettings, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS });
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -83,7 +99,7 @@ const MapExport = {
     toastManager.success('Map exported successfully');
   },
 
-  _buildExportHTML(layerDataJSON, center, zoom, heatmapData, assets = {}) {
+  _buildExportHTML(layerDataJSON, center, zoom, heatmapData, clusterSettings, assets = {}) {
     const title = Utils.escapeHtml('SalesMap Export — ' + new Date().toLocaleDateString());
     const pinPath = AppConfig.marker.pinPath;
 
@@ -100,6 +116,16 @@ const MapExport = {
       ? (assets.leafletHeatJS
           ? `<script>${assets.leafletHeatJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
           : '<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"><\/script>')
+      : '';
+    const clusterCSSTag = clusterSettings
+      ? (assets.clusterCSS
+          ? `<style>${assets.clusterCSS.replace(/<\/style>/gi, '<\\/style>')}</style>`
+          : '<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>')
+      : '';
+    const clusterJSTag = clusterSettings
+      ? (assets.clusterJS
+          ? `<script>${assets.clusterJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
+          : '<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>')
       : '';
     // Convert the deck.gl colorRange (array of 6 [r,g,b,a] stops) to leaflet.heat gradient format.
     // Stops are evenly spaced 0–1; alpha channel (0–255) becomes CSS opacity (0–1).
@@ -133,6 +159,7 @@ L.heatLayer(${JSON.stringify(heatmapData.points)}, heatOpts).addTo(map);
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>${title}</title>
 ${leafletCSSTag}
+${clusterCSSTag}
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; display: flex; flex-direction: column; }
@@ -163,11 +190,13 @@ ${leafletCSSTag}
 ${leafletJSTag}
 ${wellknownJSTag}
 ${heatScript}
+${clusterJSTag}
 <script>
 const LAYER_DATA = JSON.parse(decodeURIComponent("${layerDataJSON}"));
 const TIER_COLORS = ${JSON.stringify(AppConfig.colors.tierMap)};
 const PIN_PATH = ${JSON.stringify(pinPath)};
 const HEATMAP_MODE = ${heatmapData ? 'true' : 'false'};
+const CLUSTER_SETTINGS = ${clusterSettings ? JSON.stringify(clusterSettings) : 'null'};
 
 const map = L.map('map').setView([${center.lat}, ${center.lng}], ${zoom});
 
@@ -221,6 +250,18 @@ function makePopupContent(feature) {
 
 LAYER_DATA.forEach(function(layer) {
   if (!layer.visible) return;
+
+  // One cluster group per point layer (polygons go straight to map)
+  var clusterGroup = (!HEATMAP_MODE && CLUSTER_SETTINGS && typeof L.markerClusterGroup === 'function')
+    ? L.markerClusterGroup({
+        maxClusterRadius: CLUSTER_SETTINGS.gridSize,
+        disableClusteringAtZoom: CLUSTER_SETTINGS.maxZoom + 1,
+        spiderfyOnMaxZoom: true,
+        showCoverageOnHover: false,
+        chunkedLoading: true
+      })
+    : null;
+
   (layer.features || []).forEach(function(feature) {
     if (feature.wkt) {
       try {
@@ -239,12 +280,19 @@ LAYER_DATA.forEach(function(layer) {
     } else if (!HEATMAP_MODE && feature.latitude && feature.longitude) {
       var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
       var color = tierColor || layer.color || '#0078d4';
-      L.marker(
+      var marker = L.marker(
         [parseFloat(feature.latitude), parseFloat(feature.longitude)],
         { icon: makeIcon(color), title: feature.name || '' }
-      ).bindPopup(makePopupContent(feature)).addTo(map);
+      ).bindPopup(makePopupContent(feature));
+      if (clusterGroup) {
+        clusterGroup.addLayer(marker);
+      } else {
+        marker.addTo(map);
+      }
     }
   });
+
+  if (clusterGroup) map.addLayer(clusterGroup);
 });
 ${heatInit}
 </script>
