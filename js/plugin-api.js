@@ -398,6 +398,15 @@ class PluginManager {
     if (!p || !p.def.configSchema) return null;
 
     const form = Utils.createElement('div', { className: 'plugin-settings-form' });
+
+    const liveApply = (key, schema, getValue) => {
+      const val = getValue();
+      if (schema.type === 'boolean') p.api.config.set(key, val);
+      else if (schema.type === 'number' || schema.type === 'range') p.api.config.set(key, parseFloat(val));
+      else p.api.config.set(key, val);
+      if (p.def._isActive && typeof p.def._refresh === 'function') p.def._refresh.call(p.def);
+    };
+
     Object.entries(p.def.configSchema).forEach(([key, schema]) => {
       const group = Utils.createElement('div', { className: 'settings-field' });
       const label = Utils.createElement('label');
@@ -407,6 +416,7 @@ class PluginManager {
       if (schema.type === 'boolean') {
         input = Utils.createElement('input', { type: 'checkbox', name: key });
         if (p.config[key]) input.checked = true;
+        input.addEventListener('change', () => liveApply(key, schema, () => input.checked));
       } else if (schema.type === 'select') {
         input = Utils.createElement('select', { name: key });
         (schema.options || []).forEach(opt => {
@@ -414,6 +424,7 @@ class PluginManager {
           if (p.config[key] === opt) option.selected = true;
           input.appendChild(option);
         });
+        input.addEventListener('change', () => liveApply(key, schema, () => input.value));
       } else if (schema.type === 'range') {
         const val = p.config[key] !== undefined ? p.config[key] : schema.default;
         const decimals = schema.decimals !== undefined ? schema.decimals : 0;
@@ -434,6 +445,7 @@ class PluginManager {
         input.value = val;
         input.addEventListener('input', () => {
           valueDisplay.textContent = parseFloat(input.value).toFixed(decimals);
+          liveApply(key, schema, () => input.value);
         });
       } else if (schema.type === 'number') {
         input = Utils.createElement('input', {
@@ -454,14 +466,12 @@ class PluginManager {
 
     const saveBtn = Utils.createElement('button', { className: 'btn btn-primary btn-sm' }, 'Save Settings');
     saveBtn.addEventListener('click', () => {
-      const inputs = form.querySelectorAll('input, select');
-      inputs.forEach(inp => {
-        if (!inp.name) return;
+      // Flush any non-live fields (number, text) and confirm
+      form.querySelectorAll('input, select').forEach(inp => {
+        if (!inp.name || inp.type === 'range' || inp.type === 'checkbox' ) return;
         const schema = p.def.configSchema[inp.name];
         if (!schema) return;
-        if (schema.type === 'boolean') p.api.config.set(inp.name, inp.checked);
-        else if (schema.type === 'number' || schema.type === 'range') p.api.config.set(inp.name, parseFloat(inp.value));
-        else p.api.config.set(inp.name, inp.value);
+        liveApply(inp.name, schema, () => inp.value);
       });
       toastManager.success('Plugin settings saved');
     });
