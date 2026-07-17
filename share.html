@@ -4,8 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SalesMap — Shared View</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; height: 100vh; height: 100dvh; display: flex; flex-direction: column; }
@@ -16,15 +14,15 @@
   #heatToggle { display: none; margin-left: auto; padding: 4px 12px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.5); border-radius: 10px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
   #heatToggle.active { background: white; color: #0078d4; border-color: #b3d7f0; }
   #map { flex: 1; min-height: 0; display: none; }
-  #status { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #555; }
+  #status { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #555; padding: 20px; text-align: center; }
   #status.error { color: #c00; }
-  .legend { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 200px; max-height: 300px; overflow-y: auto; }
+  .legend { background: white; border-radius: 8px; padding: 12px; margin: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 220px; max-height: 40vh; overflow-y: auto; }
   .legend-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #333; }
   .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; color: #555; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
   .iw-row { font-size: 12px; margin-bottom: 3px; }
-  .iw-label { font-weight: 500; color: #555; margin-right: 4px; }
+  .iw-label { font-weight: 500; color: #555; margin-right: 4px; text-transform: capitalize; }
   .iw-value { color: #333; }
 </style>
 </head>
@@ -34,99 +32,99 @@
     <h1>SalesMap — Shared View</h1>
     <div class="subtitle" id="subtitle">Loading…</div>
   </div>
-  <button id="heatToggle">Heatmap</button>
+  <button type="button" id="heatToggle">Heatmap</button>
   <span class="read-only-badge">View Only</span>
 </div>
 <div id="status">Loading map…</div>
 <div id="map"></div>
+
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
-<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
 <script src="https://unpkg.com/wellknown@0.5.0/wellknown.js"></script>
+<script src="https://unpkg.com/@googlemaps/markerclusterer@2.5.3/dist/index.min.js"></script>
+<!-- AppConfig provides the same map/marker/tier/firebase constants as the live app -->
+<script src="js/config.js"></script>
 <script>
-firebase.initializeApp({
-  apiKey: 'AIzaSyDZGxOQGI30L1LFkwbOAvNS_OfT0U76_ck',
-  authDomain: 'salesmap-4771d.firebaseapp.com',
-  projectId: 'salesmap-4771d',
-  databaseURL: 'https://salesmap-4771d-default-rtdb.firebaseio.com/'
-});
+(function () {
+  'use strict';
 
-function showError(msg) {
-  var el = document.getElementById('status');
-  el.style.display = '';
-  el.textContent = msg;
-  el.className = 'error';
-}
+  var SNAPSHOT = null;
+  var MAPS_READY = false;
 
-function renderMap(snapshot) {
-  document.getElementById('status').style.display = 'none';
-  var mapEl = document.getElementById('map');
-  mapEl.style.display = 'block';
-
-  var d = snapshot.createdAt ? new Date(snapshot.createdAt).toLocaleString() : '';
-  document.getElementById('subtitle').textContent = d ? 'Shared ' + d : 'Read-only view';
-  document.title = 'SalesMap — Shared ' + (d || 'View');
-
-  var map = L.map('map').setView([snapshot.center.lat, snapshot.center.lng], snapshot.zoom);
-
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
-    maxZoom: 19
-  }).addTo(map);
-
-  var LegendControl = L.Control.extend({
-    onAdd: function() {
-      var div = L.DomUtil.create('div', 'legend');
-      var title = document.createElement('div');
-      title.className = 'legend-title';
-      title.textContent = 'Layers';
-      div.appendChild(title);
-      (snapshot.layers || []).forEach(function(layer) {
-        if (!layer.visible) return;
-        var item = document.createElement('div');
-        item.className = 'legend-item';
-        var dot = document.createElement('div');
-        dot.className = 'legend-dot';
-        dot.style.background = layer.color || '#0078d4';
-        var name = document.createElement('span');
-        name.textContent = layer.name;
-        item.appendChild(dot);
-        item.appendChild(name);
-        div.appendChild(item);
-      });
-      return div;
-    }
-  });
-  new LegendControl({ position: 'bottomleft' }).addTo(map);
-
-  var TIER_COLORS = snapshot.tierColors || {};
-  var PIN_PATH = snapshot.pinPath || '';
-  var GLOBAL_PIN_SCALE = snapshot.globalPinScale != null ? snapshot.globalPinScale : 1.0;
-
-  function makeIcon(color, scale) {
-    var s = scale || 1;
-    var w = Math.round(24 * s), h = Math.round(42 * s);
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="-12 -42 24 42" width="' + w + '" height="' + h + '">'
-      + '<path d="' + PIN_PATH + '" fill="' + color + '" stroke="white" stroke-width="1.5"/>'
-      + '</svg>';
-    return L.divIcon({ html: svg, className: '', iconSize: [w, h], iconAnchor: [w/2, h], popupAnchor: [0, -h] });
+  function showError(msg) {
+    var el = document.getElementById('status');
+    el.style.display = 'flex';
+    el.textContent = msg;
+    el.className = 'error';
   }
 
-  function makePopupContent(feature) {
-    var html = '<div style="padding:4px"><div class="iw-title">' + (feature.name || 'Feature') + '</div>';
-    ['description', 'tier', 'bdm', 'revenue'].forEach(function(prop) {
-      if (feature[prop]) {
-        html += '<div class="iw-row"><span class="iw-label">' + prop + ':</span>'
-              + '<span class="iw-value">' + feature[prop] + '</span></div>';
-      }
+  // ── Bootstrap: Firebase + Google Maps (keyed from AppConfig, same as the app) ──
+  firebase.initializeApp(AppConfig.firebase);
+
+  window.__initShareMap = function () { MAPS_READY = true; tryRender(); };
+
+  (function loadGoogleMaps() {
+    var s = document.createElement('script');
+    s.src = 'https://maps.googleapis.com/maps/api/js?key=' + AppConfig.googleMapsApiKey +
+            '&loading=async&callback=__initShareMap';
+    s.async = true;
+    s.onerror = function () { showError('Google Maps failed to load. Please try again later.'); };
+    document.head.appendChild(s);
+  })();
+
+  function tryRender() {
+    if (MAPS_READY && SNAPSHOT) renderMap(SNAPSHOT);
+  }
+
+  // ── Rendering helpers (mirror the live app's map-manager / cluster-manager) ──
+
+  var TIER_COLORS = {};
+  var PIN_PATH = '';
+  var GLOBAL_PIN_SCALE = 1.0;
+
+  function tierColorFor(feature, fallback) {
+    var key = String(feature.tier == null ? '' : feature.tier).toLowerCase();
+    return TIER_COLORS[key] || fallback || '#0078d4';
+  }
+
+  function makeMarkerIcon(color, layerPinScale) {
+    return {
+      path: PIN_PATH,
+      fillColor: color,
+      fillOpacity: AppConfig.marker.fillOpacity,
+      strokeColor: AppConfig.marker.strokeColor,
+      strokeWeight: AppConfig.marker.strokeWeight,
+      scale: AppConfig.marker.scale * GLOBAL_PIN_SCALE * (layerPinScale != null ? layerPinScale : 1),
+      anchor: new google.maps.Point(0, 0)
+    };
+  }
+
+  function infoWindowContent(feature) {
+    var wrap = document.createElement('div');
+    var title = document.createElement('div');
+    title.className = 'iw-title';
+    title.textContent = feature.name || 'Untitled Feature';
+    wrap.appendChild(title);
+    ['description', 'tier', 'bdm', 'revenue'].forEach(function (prop) {
+      var v = feature[prop];
+      if (v === undefined || v === null || v === '') return;
+      var row = document.createElement('div');
+      row.className = 'iw-row';
+      var lbl = document.createElement('span');
+      lbl.className = 'iw-label';
+      lbl.textContent = prop + ':';
+      var val = document.createElement('span');
+      val.className = 'iw-value';
+      val.textContent = v;
+      row.appendChild(lbl);
+      row.appendChild(val);
+      wrap.appendChild(row);
     });
-    return html + '</div>';
+    return wrap;
   }
 
-  // Cluster icon renderer — pin-shaped to match single markers (live-app style)
+  // Cluster pin renderer — identical shape/colors to ClusterManager._buildClusterPinSvg
   function clusterStyle(count) {
     if (count < 10)  return { color: '#4CAF50', size: 34 };
     if (count < 50)  return { color: '#FF9800', size: 40 };
@@ -135,127 +133,343 @@ function renderMap(snapshot) {
     return { color: '#E91E63', size: 62 };
   }
   function lightenColor(hex, pct) {
-    var n = parseInt(hex.replace('#',''), 16), amt = Math.round(2.55 * pct);
-    var r = Math.min(255,(n>>16)+amt), g = Math.min(255,((n>>8)&0xff)+amt), b = Math.min(255,(n&0xff)+amt);
-    return '#' + [r,g,b].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+    var n = parseInt(hex.replace('#', ''), 16), amt = Math.round(2.55 * pct);
+    var r = Math.min(255, (n >> 16) + amt);
+    var g = Math.min(255, ((n >> 8) & 0xff) + amt);
+    var b = Math.min(255, (n & 0xff) + amt);
+    return '#' + [r, g, b].map(function (v) { return v.toString(16).padStart(2, '0'); }).join('');
   }
-  function makeClusterIcon(cluster) {
-    var count = cluster.getChildCount(), s = clusterStyle(count);
-    var light = lightenColor(s.color, 20), label = count >= 1000 ? (count/1000).toFixed(1)+'K' : String(count);
-    var fs = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
-    var w = s.size, h = Math.round(s.size * 46 / 26), uid = 'c' + Math.random().toString(36).slice(2);
-    var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="'+w+'" height="'+h+'" viewBox="-13 -44 26 46">'
-      + '<defs><radialGradient id="'+uid+'" cx="35%" cy="30%"><stop offset="0%" style="stop-color:'+light+';stop-opacity:1"/><stop offset="100%" style="stop-color:'+s.color+';stop-opacity:1"/></radialGradient></defs>'
-      + '<path d="'+PIN_PATH+'" fill="url(#'+uid+')" stroke="white" stroke-width="1.5"/>'
-      + '<text x="0" y="-30" text-anchor="middle" dominant-baseline="central" fill="white" font-size="'+fs+'" font-family="Arial,sans-serif" font-weight="bold">'+label+'</text></svg>';
-    return L.divIcon({ html: svg, className: '', iconSize: [w, h], iconAnchor: [w/2, h] });
+  function formatCount(count) {
+    return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
   }
-
-  var cs = snapshot.clusterSettings;
-  var heatActive = !!(snapshot.heatmap && snapshot.heatmap.points && snapshot.heatmap.points.length);
-  function makePointGroup(clustered) {
-    if (clustered && cs && typeof L.markerClusterGroup === 'function') {
-      return L.markerClusterGroup({
-        maxClusterRadius: cs.gridSize || 60,
-        disableClusteringAtZoom: (cs.maxZoom || 16) + 1,
-        spiderfyOnMaxZoom: true,
-        showCoverageOnHover: false,
-        iconCreateFunction: makeClusterIcon
-      });
-    }
-    return L.layerGroup();
-  }
-
-  var allPointGroups = [];        // groups hidden when the heatmap is toggled on
-  var persistentGroups = [];      // showOnHeatmap groups — stay visible over heat
-
-  (snapshot.layers || []).forEach(function(layer) {
-    if (!layer.visible) return;
-    var layerClusters = layer.clusterEnabled !== false;
-    var layerScale = GLOBAL_PIN_SCALE * (layer.pinScale != null ? layer.pinScale : 1);
-    var pinsOnHeat = !!layer.showOnHeatmap;
-    var layerGroup = makePointGroup(layerClusters);
-    (layer.features || []).forEach(function(feature) {
-      if (feature.wkt) {
-        try {
-          var parsed = wellknown ? wellknown.parse(feature.wkt) : null;
-          if (parsed && parsed.coordinates) {
-            var latlngs = parsed.coordinates[0].map(function(c) { return [c[1], c[0]]; });
-            var fillColor = TIER_COLORS[String(feature.tier || '').toLowerCase()] || layer.color || '#0078d4';
-            L.polygon(latlngs, {
-              fillColor: fillColor, fillOpacity: 0.35,
-              color: layer.color || '#0078d4', weight: 2
-            }).bindPopup(makePopupContent(feature)).addTo(map);
-          }
-        } catch(e) {}
-      } else if (feature.latitude && feature.longitude) {
-        var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
-        var color = tierColor || layer.color || '#0078d4';
-        L.marker(
-          [parseFloat(feature.latitude), parseFloat(feature.longitude)],
-          { icon: makeIcon(color, layerScale), title: feature.name || '' }
-        ).bindPopup(makePopupContent(feature)).addTo(layerGroup);
+  function buildClusterRenderer() {
+    return {
+      render: function (cluster) {
+        var count = cluster.count;
+        var position = cluster.position;
+        var st = clusterStyle(count);
+        var light = lightenColor(st.color, 20);
+        var label = formatCount(count);
+        var fontSize = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
+        var w = st.size, h = Math.round(st.size * 46 / 26);
+        var uid = 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h + '" viewBox="-13 -44 26 46">'
+          + '<defs><radialGradient id="' + uid + '" cx="35%" cy="30%">'
+          + '<stop offset="0%" style="stop-color:' + light + ';stop-opacity:1"/>'
+          + '<stop offset="100%" style="stop-color:' + st.color + ';stop-opacity:1"/>'
+          + '</radialGradient></defs>'
+          + '<path d="' + PIN_PATH + '" fill="url(#' + uid + ')" stroke="white" stroke-width="1.5"/>'
+          + '<text x="0" y="-30" text-anchor="middle" dominant-baseline="central" fill="white" font-size="' + fontSize + '" font-family="Arial,sans-serif" font-weight="bold">' + label + '</text>'
+          + '</svg>';
+        return new google.maps.Marker({
+          position: position,
+          icon: {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+            scaledSize: new google.maps.Size(w, h),
+            anchor: new google.maps.Point(w / 2, h)
+          },
+          zIndex: 1000 + count
+        });
       }
-    });
-    layerGroup.addTo(map);
-    if (pinsOnHeat) persistentGroups.push(layerGroup);
-    else allPointGroups.push(layerGroup);
-  });
-
-  if (snapshot.heatmap && snapshot.heatmap.points && snapshot.heatmap.points.length) {
-    var hm = snapshot.heatmap;
-    // Convert colorRange [r,g,b,a] stops to leaflet.heat gradient (same logic as the HTML export)
-    var leafletGradient = null;
-    if (Array.isArray(hm.colorRange)) {
-      leafletGradient = {};
-      hm.colorRange.forEach(function(stop, i, arr) {
-        var key = (i / (arr.length - 1)).toFixed(2);
-        leafletGradient[key] = 'rgba('+stop[0]+','+stop[1]+','+stop[2]+','+(stop[3]/255).toFixed(2)+')';
-      });
-    }
-    var heatOpts = {
-      radius:     hm.radius     || 30,
-      max:        parseFloat((1 / (hm.intensity || 1)).toFixed(3)),
-      minOpacity: Math.max(0.02, hm.threshold || 0.05),
-      blur:       15
     };
-    if (leafletGradient) heatOpts.gradient = leafletGradient;
-    var heatLayer = L.heatLayer(hm.points, heatOpts);
+  }
 
-    var toggleBtn = document.getElementById('heatToggle');
-    toggleBtn.style.display = 'block';
-    var heatOn = false;
+  // ── Native canvas heatmap overlay — ported from plugins/heatmap-overlay.js ──
+  function buildPalette(stops) {
+    var colored = stops.slice(1); // drop leading transparent stop
+    var canvas = document.createElement('canvas');
+    canvas.width = 256; canvas.height = 1;
+    var ctx = canvas.getContext('2d');
+    var grad = ctx.createLinearGradient(0, 0, 256, 0);
+    colored.forEach(function (s, i) {
+      grad.addColorStop(i / (colored.length - 1), 'rgb(' + s[0] + ',' + s[1] + ',' + s[2] + ')');
+    });
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 256, 1);
+    return ctx.getImageData(0, 0, 256, 1).data;
+  }
 
-    toggleBtn.addEventListener('click', function() {
-      heatOn = !heatOn;
-      if (heatOn) {
-        allPointGroups.forEach(function(g) { map.removeLayer(g); });
-        heatLayer.addTo(map);
-        toggleBtn.classList.add('active');
+  function createHeatOverlay(points, params) {
+    function makeBrush(radius, blur) {
+      var pad = radius + blur;
+      var c = document.createElement('canvas');
+      c.width = c.height = pad * 2;
+      var cx = c.getContext('2d');
+      var g = cx.createRadialGradient(pad, pad, 0, pad, pad, pad);
+      g.addColorStop(0, 'rgba(0,0,0,1)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      cx.fillStyle = g;
+      cx.fillRect(0, 0, pad * 2, pad * 2);
+      return { canvas: c, pad: pad };
+    }
+
+    function HeatCanvasOverlay(pts, p) {
+      this._points = pts;
+      this._radius = p.radius;
+      this._intensity = p.intensity;
+      this._smoothing = p.smoothing;
+      this._opacity = p.opacity;
+      this._palette = p.palette;
+      this._canvas = null;
+      this._brush = null;
+    }
+    HeatCanvasOverlay.prototype = new google.maps.OverlayView();
+
+    HeatCanvasOverlay.prototype.onAdd = function () {
+      var canvas = document.createElement('canvas');
+      canvas.style.position = 'absolute';
+      canvas.style.pointerEvents = 'none';
+      canvas.style.opacity = this._opacity;
+      this._canvas = canvas;
+      this.getPanes().overlayLayer.appendChild(canvas);
+    };
+    HeatCanvasOverlay.prototype.onRemove = function () {
+      if (this._canvas && this._canvas.parentNode) this._canvas.parentNode.removeChild(this._canvas);
+      this._canvas = null;
+      this._brush = null;
+    };
+    HeatCanvasOverlay.prototype.draw = function () {
+      var proj = this.getProjection();
+      var map = this.getMap();
+      if (!proj || !this._canvas || !map) return;
+      var bounds = map.getBounds();
+      if (!bounds) return;
+
+      var trPx = proj.fromLatLngToDivPixel(bounds.getNorthEast());
+      var blPx = proj.fromLatLngToDivPixel(bounds.getSouthWest());
+      var left = blPx.x, top = trPx.y;
+      var w = Math.max(1, Math.round(trPx.x - blPx.x));
+      var h = Math.max(1, Math.round(blPx.y - trPx.y));
+
+      var canvas = this._canvas;
+      canvas.style.left = left + 'px';
+      canvas.style.top = top + 'px';
+      canvas.width = w;
+      canvas.height = h;
+
+      var ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, w, h);
+
+      var r = this._radius;
+      var blur = Math.max(1, Math.round(r * (0.2 + this._smoothing)));
+      if (!this._brush) this._brush = makeBrush(r, blur);
+      var brush = this._brush, pad = brush.pad;
+      var baseAlpha = Math.min(1, Math.max(0.03, 0.15 * this._intensity));
+
+      for (var i = 0; i < this._points.length; i++) {
+        var dp = proj.fromLatLngToDivPixel(this._points[i]);
+        var x = dp.x - left, y = dp.y - top;
+        if (x < -pad || y < -pad || x > w + pad || y > h + pad) continue;
+        ctx.globalAlpha = baseAlpha;
+        ctx.drawImage(brush.canvas, x - pad, y - pad);
+      }
+      ctx.globalAlpha = 1;
+
+      if (!this._palette) return;
+      var img = ctx.getImageData(0, 0, w, h);
+      var data = img.data, pal = this._palette;
+      for (var k = 3; k < data.length; k += 4) {
+        var a = data[k];
+        if (a) {
+          var j = a * 4;
+          data[k - 3] = pal[j];
+          data[k - 2] = pal[j + 1];
+          data[k - 1] = pal[j + 2];
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    };
+
+    return new HeatCanvasOverlay(points, params);
+  }
+
+  // ── Main render ──────────────────────────────────────────────────────────
+  function renderMap(snapshot) {
+    document.getElementById('status').style.display = 'none';
+    var mapEl = document.getElementById('map');
+    mapEl.style.display = 'block';
+
+    var d = snapshot.createdAt ? new Date(snapshot.createdAt).toLocaleString() : '';
+    document.getElementById('subtitle').textContent = d ? 'Shared ' + d : 'Read-only view';
+    document.title = 'SalesMap — Shared ' + (d || 'View');
+
+    TIER_COLORS = snapshot.tierColors || AppConfig.colors.tierMap;
+    PIN_PATH = snapshot.pinPath || AppConfig.marker.pinPath;
+    GLOBAL_PIN_SCALE = snapshot.globalPinScale != null ? snapshot.globalPinScale : 1.0;
+
+    var map = new google.maps.Map(mapEl, {
+      center: { lat: snapshot.center.lat, lng: snapshot.center.lng },
+      zoom: snapshot.zoom,
+      mapTypeControl: true,
+      streetViewControl: true,
+      fullscreenControl: true,
+      zoomControl: true,
+      gestureHandling: 'greedy',
+      mapTypeId: google.maps.MapTypeId.ROADMAP
+    });
+
+    var infoWindow = new google.maps.InfoWindow();
+
+    // Legend (visible layers)
+    var legend = document.createElement('div');
+    legend.className = 'legend';
+    var lt = document.createElement('div');
+    lt.className = 'legend-title';
+    lt.textContent = 'Layers';
+    legend.appendChild(lt);
+    (snapshot.layers || []).forEach(function (layer) {
+      if (!layer.visible) return;
+      var item = document.createElement('div');
+      item.className = 'legend-item';
+      var dot = document.createElement('div');
+      dot.className = 'legend-dot';
+      dot.style.background = layer.color || '#0078d4';
+      var name = document.createElement('span');
+      name.textContent = layer.name;
+      item.appendChild(dot);
+      item.appendChild(name);
+      legend.appendChild(item);
+    });
+    map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(legend);
+
+    var cs = snapshot.clusterSettings;
+    var heatHideable = [];   // {type:'cluster'|'markers', obj/list} hidden when heatmap is on
+    var persistent = [];     // showOnHeatmap groups — stay visible over the heat canvas
+    var heatPoints = [];
+
+    function openInfo(feature, target, position) {
+      infoWindow.setContent(infoWindowContent(feature));
+      if (position) { infoWindow.setPosition(position); infoWindow.open(map); }
+      else { infoWindow.open(map, target); }
+    }
+
+    (snapshot.layers || []).forEach(function (layer) {
+      if (!layer.visible) return;
+      var layerScale = (layer.pinScale != null ? layer.pinScale : 1);
+      var clustered = cs && layer.clusterEnabled !== false;
+      var markers = [];
+
+      (layer.features || []).forEach(function (feature) {
+        if (feature.wkt) {
+          renderPolygon(feature, layer);
+          return;
+        }
+        var lat = parseFloat(feature.latitude), lng = parseFloat(feature.longitude);
+        if (isNaN(lat) || isNaN(lng)) return;
+
+        heatPoints.push(new google.maps.LatLng(lat, lng));
+
+        var color = tierColorFor(feature, layer.color);
+        var marker = new google.maps.Marker({
+          position: { lat: lat, lng: lng },
+          title: feature.name || '',
+          icon: makeMarkerIcon(color, layerScale)
+        });
+        marker.addListener('click', function () { openInfo(feature, marker); });
+        markers.push(marker);
+      });
+
+      if (markers.length === 0) return;
+
+      var group;
+      if (clustered && typeof markerClusterer !== 'undefined' && markerClusterer.MarkerClusterer) {
+        var algorithm = markerClusterer.GridAlgorithm
+          ? new markerClusterer.GridAlgorithm({ gridSize: cs.gridSize || 60, maxZoom: cs.maxZoom || 16, minClusterSize: cs.minClusterSize || 2 })
+          : undefined;
+        group = new markerClusterer.MarkerClusterer({
+          map: map,
+          markers: markers,
+          renderer: buildClusterRenderer(),
+          algorithm: algorithm
+        });
+        (layer.showOnHeatmap ? persistent : heatHideable).push({ type: 'cluster', obj: group, list: markers });
       } else {
-        map.removeLayer(heatLayer);
-        allPointGroups.forEach(function(g) { g.addTo(map); });
-        toggleBtn.classList.remove('active');
+        markers.forEach(function (m) { m.setMap(map); });
+        (layer.showOnHeatmap ? persistent : heatHideable).push({ type: 'markers', list: markers });
       }
     });
-  }
-}
 
-async function init() {
-  var id = new URLSearchParams(window.location.search).get('id');
-  if (!id) { showError('No map ID provided in the URL.'); return; }
-  try {
-    await firebase.auth().signInAnonymously();
-    var snap = await firebase.database().ref('salesTerritoryData/mapShares/' + id).once('value');
-    var data = snap.val();
-    if (!data) { showError('Map snapshot not found. The link may be invalid.'); return; }
-    renderMap(data);
-  } catch(e) {
-    showError('Failed to load map. Please check your connection and try again.');
-  }
-}
+    function renderPolygon(feature, layer) {
+      var parsed;
+      try { parsed = wellknown ? wellknown.parse(feature.wkt) : null; } catch (e) { return; }
+      if (!parsed || !parsed.coordinates) return;
+      var rings = parsed.type === 'MultiPolygon'
+        ? parsed.coordinates
+        : [parsed.coordinates];
+      var fillColor = tierColorFor(feature, layer.color);
+      rings.forEach(function (polyCoords) {
+        var paths = polyCoords.map(function (ring) {
+          return ring.map(function (c) { return { lat: c[1], lng: c[0] }; });
+        });
+        var polygon = new google.maps.Polygon({
+          paths: paths,
+          fillColor: fillColor,
+          fillOpacity: AppConfig.polygon.fillOpacity,
+          strokeColor: fillColor,
+          strokeWeight: AppConfig.polygon.strokeWeight,
+          strokeOpacity: 0.8,
+          map: map
+        });
+        polygon.addListener('click', function (e) { openInfo(feature, null, e.latLng); });
+      });
+    }
 
-init();
+    // ── Heatmap toggle ──
+    var hm = snapshot.heatmap;
+    if (hm && hm.points && hm.points.length) {
+      var heatOverlay = createHeatOverlay(heatPoints, {
+        radius:    hm.radius    || 45,
+        intensity: hm.intensity || 1,
+        smoothing: hm.threshold != null ? hm.threshold : 0.1,
+        opacity:   hm.opacity   || 0.7,
+        palette:   Array.isArray(hm.colorRange) ? buildPalette(hm.colorRange) : null
+      });
+
+      function setGroupVisible(g, visible) {
+        if (g.type === 'cluster') {
+          // Mirror ClusterManager's heatmap hide/show: clear then re-add markers
+          // (proven path — avoids stale cluster glyphs left behind by setMap).
+          if (visible) g.obj.addMarkers(g.list);
+          else g.obj.clearMarkers();
+        } else {
+          g.list.forEach(function (m) { m.setMap(visible ? map : null); });
+        }
+      }
+
+      var toggleBtn = document.getElementById('heatToggle');
+      toggleBtn.style.display = 'block';
+      var heatOn = false;
+      toggleBtn.addEventListener('click', function () {
+        heatOn = !heatOn;
+        if (heatOn) {
+          heatHideable.forEach(function (g) { setGroupVisible(g, false); });
+          heatOverlay.setMap(map);
+          toggleBtn.classList.add('active');
+        } else {
+          heatOverlay.setMap(null);
+          heatHideable.forEach(function (g) { setGroupVisible(g, true); });
+          toggleBtn.classList.remove('active');
+        }
+      });
+    }
+  }
+
+  // ── Load snapshot ──────────────────────────────────────────────────────────
+  (async function init() {
+    var id = new URLSearchParams(window.location.search).get('id');
+    if (!id) { showError('No map ID provided in the URL.'); return; }
+    try {
+      await firebase.auth().signInAnonymously();
+      var snap = await firebase.database().ref('salesTerritoryData/mapShares/' + id).once('value');
+      var data = snap.val();
+      if (!data) { showError('Map snapshot not found. The link may be invalid or expired.'); return; }
+      SNAPSHOT = data;
+      tryRender();
+    } catch (e) {
+      showError('Failed to load map. Please check your connection and try again.');
+    }
+  })();
+})();
 </script>
 </body>
 </html>

@@ -49,8 +49,9 @@ const MapShare = {
       globalPinScale = s.pinScale ?? 1.0;
       if (s.enabled !== false && cm._enabled !== false) {
         clusterSettings = {
-          maxZoom:  s.maxZoom  ?? 16,
-          gridSize: s.gridSize ?? 60
+          maxZoom:        s.maxZoom        ?? 16,
+          minClusterSize: s.minClusterSize ?? 2,
+          gridSize:       s.gridSize       ?? 60
         };
       }
     }
