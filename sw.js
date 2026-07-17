@@ -1,6 +1,6 @@
 // sw.js — Service Worker for offline-first caching
 
-const CACHE_NAME = 'salesmap-v10';
+const CACHE_NAME = 'salesmap-v11';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -28,6 +28,7 @@ const STATIC_ASSETS = [
   './js/activity-log.js',
   './js/notification-center.js',
   './js/map-export.js',
+  './js/map-share.js',
   './js/controllers/sync-controller.js',
   './js/controllers/import-controller.js',
   './js/controllers/drawing-controller.js',
@@ -77,9 +78,16 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Network-first for JS and CSS so code changes are always picked up immediately.
-  // Cache is used only as offline fallback.
-  if (url.pathname.endsWith('.js') || url.pathname.endsWith('.css')) {
+  // Network-first for JS, CSS, and HTML so code and markup changes are always
+  // picked up immediately. Cache is used only as an offline fallback.
+  const isNavigation = event.request.mode === 'navigate';
+  if (
+    isNavigation ||
+    url.pathname.endsWith('.js') ||
+    url.pathname.endsWith('.css') ||
+    url.pathname.endsWith('.html') ||
+    url.pathname.endsWith('/')
+  ) {
     event.respondWith(
       fetch(event.request)
         .then(response => {
@@ -89,12 +97,12 @@ self.addEventListener('fetch', event => {
           }
           return response;
         })
-        .catch(() => caches.match(event.request))
+        .catch(() => caches.match(event.request).then(cached => cached || caches.match('./index.html')))
     );
     return;
   }
 
-  // Cache-first for HTML and other static assets
+  // Cache-first for other static assets (images, fonts, etc.)
   event.respondWith(
     caches.match(event.request).then(cached => {
       if (cached) return cached;
