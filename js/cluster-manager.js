@@ -14,6 +14,33 @@ class ClusterManager {
     this._settings = this._loadSettings();
     // Reconcile runtime flag with persisted setting so a disabled state survives reload.
     this._enabled = this._settings.enabled !== false;
+    // Optional predicate (featureData) => boolean. When set, markers that fail it
+    // are hidden from both clustered and unclustered rendering. Used by plugins
+    // like the Filter/Query panel and the Radius tool.
+    this._featureFilter = null;
+  }
+
+  // A marker passes when there is no active filter or the filter accepts its data.
+  _passesFilter(marker) {
+    return !this._featureFilter || this._featureFilter(marker._featureData);
+  }
+
+  // Install (or clear, with null) a feature-level visibility predicate, then
+  // re-render every layer so clusters recount and stray markers disappear.
+  setFeatureFilter(predicate) {
+    this._featureFilter = predicate || null;
+    this._markers.forEach((markers, layerId) => {
+      const layerData = this._mapManager?.getLayerData(layerId);
+      const visible = layerData ? layerData.visible : true;
+      markers.forEach(m => m.setMap(null));
+      if (!visible) return;
+      if (this._layerClusters(layerId)) {
+        this._rebuildClusterer(layerId, markers);
+      } else {
+        this._setupIdleListener();
+        this._showMarkersInViewport(markers);
+      }
+    });
   }
 
   _defaultSettings() {
@@ -96,8 +123,8 @@ class ClusterManager {
       const clusterer = this._clusterers.get(layerId);
       const tracked = this._clusteredSets.get(layerId);
 
-      // Deduplicate: only add markers not already tracked in this clusterer
-      const toAdd = markers.filter(m => !tracked.has(m));
+      // Deduplicate: only add markers not already tracked, and honor the filter.
+      const toAdd = markers.filter(m => !tracked.has(m) && this._passesFilter(m));
       if (toAdd.length === 0) return;
 
       toAdd.forEach(m => tracked.add(m));
@@ -325,7 +352,7 @@ class ClusterManager {
       const layerData = this._mapManager?.getLayerData(layerId);
       const layerVisible = layerData ? layerData.visible : true;
       markers.forEach(m => {
-        if (!layerVisible) { m.setMap(null); return; }
+        if (!layerVisible || !this._passesFilter(m)) { m.setMap(null); return; }
         if (!bounds) { m.setMap(this._map); return; }
         const pos = m.getPosition();
         m.setMap(pos && bounds.contains(pos) ? this._map : null);
@@ -336,6 +363,7 @@ class ClusterManager {
   _showMarkersInViewport(markers) {
     const bounds = this._map.getBounds();
     markers.forEach(m => {
+      if (!this._passesFilter(m)) { m.setMap(null); return; }
       if (!bounds) { m.setMap(this._map); return; }
       const pos = m.getPosition();
       m.setMap(pos && bounds.contains(pos) ? this._map : null);

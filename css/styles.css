@@ -759,3 +759,29 @@ textarea.form-control { resize: vertical; }
   #topBar { padding: 0 8px; }
   #appLogo { font-size: 14px; }
 }
+
+/* ─── Plugin UI (filter, choropleth, area, radius, route, territory) ───────── */
+.area-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 6px; }
+.area-table th { text-align: left; color: #605e5c; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid #edebe9; }
+.area-table td { padding: 4px 6px; border-bottom: 1px solid #f3f2f1; color: #323130; }
+.area-table td:not(:first-child), .area-table th:not(:first-child) { text-align: right; white-space: nowrap; }
+
+.choropleth-legend { background: #fff; border-radius: 8px; padding: 10px 12px; margin: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); min-width: 160px; }
+.choropleth-legend-title { font-size: 12px; font-weight: 600; color: #323130; margin-bottom: 6px; text-transform: capitalize; }
+.choropleth-legend-bar { height: 12px; border-radius: 3px; border: 1px solid rgba(0,0,0,0.1); }
+.choropleth-legend-scale { display: flex; justify-content: space-between; font-size: 11px; color: #605e5c; margin-top: 4px; }
+
+.filter-count { font-size: 13px; font-weight: 600; color: #0078d4; padding: 6px 0 10px; }
+.filter-field-group { border-top: 1px solid #edebe9; padding: 10px 0; }
+.filter-field-header { font-size: 13px; font-weight: 600; color: #323130; margin-bottom: 6px; text-transform: capitalize; }
+.filter-checkbox-list { max-height: 160px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+.filter-checkbox-row { font-size: 12px; color: #323130; display: flex; align-items: center; cursor: pointer; }
+.filter-range-row { display: flex; align-items: center; gap: 6px; }
+.filter-range-row input { flex: 1; min-width: 0; }
+
+.radius-stats { font-size: 12px; color: #323130; margin: 6px 0; line-height: 1.5; }
+.radius-list, .route-list { display: flex; flex-direction: column; margin-top: 6px; max-height: 40vh; overflow-y: auto; }
+.radius-list-row, .route-list-row { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 4px 0; border-bottom: 1px solid #f3f2f1; }
+.radius-list-name, .route-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.radius-list-dist, .route-dist { color: #605e5c; white-space: nowrap; }
+.route-num { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #d13438; color: #fff; font-size: 11px; font-weight: 700; flex-shrink: 0; }

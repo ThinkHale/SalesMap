@@ -1,6 +1,6 @@
 // sw.js — Service Worker for offline-first caching
 
-const CACHE_NAME = 'salesmap-v11';
+const CACHE_NAME = 'salesmap-v12';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -16,6 +16,13 @@ const STATIC_ASSETS = [
   './js/plugin-api.js',
   './plugins/heatmap-overlay.js',
   './plugins/layer-styler.js',
+  './plugins/data-filter.js',
+  './plugins/choropleth.js',
+  './plugins/territory-builder.js',
+  './plugins/route-optimizer.js',
+  './plugins/geo-export.js',
+  './plugins/area-measure.js',
+  './plugins/radius-tool.js',
   './js/firebase-config.js',
   './js/geocoding-service.js',
   './js/csv-parser.js',

@@ -279,6 +279,16 @@ class PluginManager {
           const cm = AppRegistry.get('clusterManager');
           if (cm) cm.showLayerForHeatmap(layerId);
         };
+        // Feature-level visibility filter: predicate is (featureData) => boolean,
+        // or null to clear. Composes correctly with clustering & viewport culling.
+        api.map.setFeatureFilter = predicate => {
+          const cm = AppRegistry.get('clusterManager');
+          if (cm) cm.setFeatureFilter(predicate);
+        };
+        api.map.clearFeatureFilter = () => {
+          const cm = AppRegistry.get('clusterManager');
+          if (cm) cm.setFeatureFilter(null);
+        };
       }
     }
 
