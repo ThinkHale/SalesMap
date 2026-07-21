@@ -101,7 +101,14 @@ class CSVParser {
     return 'address';
   }
 
-  extractFeatures(rows, columnMap, dataType) {
+  // options.customColumns — when provided, only these unmapped columns are kept as
+  // custom properties (the import wizard's "Additional fields" allowlist). When
+  // omitted, every unmapped column is preserved (backward-compatible default).
+  extractFeatures(rows, columnMap, dataType, options = {}) {
+    const allow = Array.isArray(options.customColumns) ? new Set(options.customColumns) : null;
+    // Geometry fields are handled explicitly below, not as generic string props.
+    const geomFields = new Set(['latitude', 'longitude', 'wkt']);
+
     return rows.map(row => {
       const feature = {
         id: Utils.generateId('feature'),
@@ -109,36 +116,36 @@ class CSVParser {
         source: 'csv'
       };
 
-      // Map known fields
-      if (columnMap.name && row[columnMap.name] !== undefined) {
-        feature.name = String(row[columnMap.name] || '');
-      } else {
-        feature.name = '';
-      }
+      // Name (always present, even if blank, so the layer menu has something to show).
+      feature.name = (columnMap.name && row[columnMap.name] != null) ? String(row[columnMap.name]) : '';
 
-      if (columnMap.description) feature.description = String(row[columnMap.description] || '');
-      if (columnMap.tier) feature.tier = String(row[columnMap.tier] || '');
-      if (columnMap.bdm) feature.bdm = String(row[columnMap.bdm] || '');
-      if (columnMap.revenue) {
-        const rev = Utils.parseNumber(row[columnMap.revenue]);
-        feature.revenue = isNaN(rev) ? null : rev;
+      // Every other mapped known field → its canonical property name (tier, bdm,
+      // revenue, territory, state, city, county, zipCode, street, description…).
+      for (const [field, col] of Object.entries(columnMap)) {
+        if (field === 'name' || geomFields.has(field)) continue;
+        if (col == null || row[col] === undefined) continue;
+        if (field === 'revenue') {
+          const rev = Utils.parseNumber(row[col]);
+          feature.revenue = isNaN(rev) ? null : rev;
+        } else {
+          feature[field] = String(row[col] ?? '');
+        }
       }
 
       if (dataType === 'point' || dataType === 'mixed') {
         if (columnMap.latitude) feature.latitude = parseFloat(row[columnMap.latitude]);
         if (columnMap.longitude) feature.longitude = parseFloat(row[columnMap.longitude]);
       }
-
       if (dataType === 'polygon') {
         if (columnMap.wkt) feature.wkt = String(row[columnMap.wkt] || '');
       }
 
-      // Preserve all original columns that aren't system columns
+      // Preserve unmapped columns as custom properties (subject to the allowlist).
       const systemCols = new Set(Object.values(columnMap));
       for (const [col, val] of Object.entries(row)) {
-        if (!systemCols.has(col)) {
-          feature[col] = val;
-        }
+        if (systemCols.has(col)) continue;
+        if (allow && !allow.has(col)) continue;
+        feature[col] = val;
       }
 
       return feature;

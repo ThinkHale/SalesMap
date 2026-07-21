@@ -1,12 +1,14 @@
 // plugins/route-optimizer.js — Nearest-neighbor + 2-opt route ordering
-// Orders the pins of a layer into an efficient visiting sequence and draws the
-// route, with a numbered day-plan list and total distance / estimated drive time.
+// Orders the pins of a layer into an efficient visiting sequence, then draws the
+// real road-following route via the Google Directions service (with actual driving
+// distance and time). Falls back to a dashed straight-line estimate if the
+// Directions API is unavailable.
 
 const RouteOptimizerPlugin = {
   id: 'route-optimizer',
   name: 'Route Optimizer',
   version: '1.0.0',
-  description: 'Order a layer\'s pins into an efficient route (nearest-neighbor + 2-opt) with a numbered day plan.',
+  description: 'Order a layer\'s pins into an efficient road-following route with a numbered day plan and real driving distance/time.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
   defaultEnabled: false,
@@ -18,6 +20,8 @@ const RouteOptimizerPlugin = {
   _polyline: null,
   _markers: [],
   _drawerBody: null,
+  _routeToken: 0,
+  _directionsService: null,
 
   init(api) {
     this._api = api;
@@ -60,7 +64,7 @@ const RouteOptimizerPlugin = {
       body.appendChild(startGroup);
 
       const mphGroup = Utils.createElement('div', { className: 'form-group' });
-      mphGroup.appendChild(Utils.createElement('label', { className: 'form-label' }, 'Avg speed (mph) for time estimate'));
+      mphGroup.appendChild(Utils.createElement('label', { className: 'form-label' }, 'Avg speed (mph) — used only if road routing is unavailable'));
       const mph = Utils.createElement('input', { type: 'number', className: 'form-control', min: '5' });
       mph.value = 40;
       mphGroup.appendChild(mph);
@@ -152,21 +156,66 @@ const RouteOptimizerPlugin = {
     let order = this._nearestNeighbor(points, startIdx);
     if (points.length <= 300) order = this._twoOpt(order);
 
-    this._drawRoute(order);
-    this._renderResults(order, mph);
+    this._clearRoute();          // cancels any in-flight directions request
+    this._drawMarkers(order);
+    const token = this._routeToken;
+
+    // Prefer real road-following directions; fall back to a straight-line estimate
+    // if the Directions service is unavailable (e.g. Directions API not enabled).
+    if (typeof google !== 'undefined' && google.maps && typeof google.maps.DirectionsService === 'function') {
+      this._api.ui.toast.info('Calculating road route…');
+      this._buildRoadRoute(order).then(res => {
+        if (token !== this._routeToken) return;   // a newer request superseded this one
+        this._drawPolyline(res.path, false);
+        this._renderResultsRoad(order, res.legMeters, res.totalMeters, res.totalSeconds);
+      }).catch(err => {
+        if (token !== this._routeToken) return;
+        this._drawPolyline(order.map(p => ({ lat: p.lat, lng: p.lng })), true);
+        this._renderResults(order, mph, `Road directions unavailable (${err.message}) — showing straight-line estimate`);
+      });
+    } else {
+      this._drawPolyline(order.map(p => ({ lat: p.lat, lng: p.lng })), true);
+      this._renderResults(order, mph, 'Road directions unavailable — showing straight-line estimate');
+    }
   },
 
-  _drawRoute(order) {
-    this._clearRoute();
+  // Request driving directions along the fixed order, chunked to respect the
+  // Directions waypoint limit (25 points per request), and stitched together.
+  async _buildRoadRoute(order) {
+    const ds = this._directionsService || (this._directionsService = new google.maps.DirectionsService());
+    const CHUNK = 25; // origin + up to 23 waypoints + destination
+    const path = [];
+    const legMeters = [];
+    let totalMeters = 0, totalSeconds = 0;
+
+    for (let i = 0; i < order.length - 1; i += (CHUNK - 1)) {
+      const seg = order.slice(i, i + CHUNK);
+      if (seg.length < 2) break;
+      const origin = { lat: seg[0].lat, lng: seg[0].lng };
+      const destination = { lat: seg[seg.length - 1].lat, lng: seg[seg.length - 1].lng };
+      const waypoints = seg.slice(1, -1).map(p => ({ location: { lat: p.lat, lng: p.lng }, stopover: true }));
+
+      const res = await new Promise((resolve, reject) => {
+        ds.route({ origin, destination, waypoints, optimizeWaypoints: false, travelMode: google.maps.TravelMode.DRIVING },
+          (r, status) => (status === 'OK' && r) ? resolve(r) : reject(new Error(status)));
+      });
+
+      const route = res.routes[0];
+      route.legs.forEach(leg => {
+        const m = leg.distance ? leg.distance.value : 0;
+        legMeters.push(m);
+        totalMeters += m;
+        totalSeconds += leg.duration ? leg.duration.value : 0;
+      });
+      (route.overview_path || []).forEach(pt => path.push(pt));
+      await Utils.wait(150); // gentle spacing to stay under QPS limits
+    }
+
+    return { path, legMeters, totalMeters, totalSeconds };
+  },
+
+  _drawMarkers(order) {
     const map = this._api.map.getMap();
-    const path = order.map(p => ({ lat: p.lat, lng: p.lng }));
-
-    this._polyline = new google.maps.Polyline({
-      path, map,
-      strokeColor: '#d13438', strokeOpacity: 0.9, strokeWeight: 3,
-      icons: [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2 }, repeat: '120px' }]
-    });
-
     order.forEach((p, i) => {
       const marker = new google.maps.Marker({
         position: { lat: p.lat, lng: p.lng }, map,
@@ -176,16 +225,63 @@ const RouteOptimizerPlugin = {
       });
       this._markers.push(marker);
     });
-
     const bounds = new google.maps.LatLngBounds();
-    path.forEach(p => bounds.extend(p));
+    order.forEach(p => bounds.extend({ lat: p.lat, lng: p.lng }));
     map.fitBounds(bounds, 60);
   },
 
-  _renderResults(order, mph) {
+  _drawPolyline(path, dashed) {
+    if (this._polyline) { this._polyline.setMap(null); this._polyline = null; }
+    const map = this._api.map.getMap();
+    const opts = { path, map, strokeColor: '#d13438', strokeWeight: 4, strokeOpacity: dashed ? 0 : 0.85, zIndex: 2000 };
+    if (dashed) {
+      // Dotted line signals a straight-line estimate rather than a real road route.
+      opts.icons = [{ icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.8, scale: 3 }, offset: '0', repeat: '12px' }];
+    } else {
+      opts.icons = [{ icon: { path: google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 2 }, repeat: '160px' }];
+    }
+    this._polyline = new google.maps.Polyline(opts);
+  },
+
+  _fmtDuration(seconds) {
+    const min = Math.round(seconds / 60);
+    if (min < 60) return `${min} min`;
+    return `${Math.floor(min / 60)}h ${min % 60}m`;
+  },
+
+  _renderResultsRoad(order, legMeters, totalMeters, totalSeconds) {
     const results = this._drawerBody && this._drawerBody.querySelector('#routeResults');
     if (!results) return;
     results.innerHTML = '';
+
+    const totalMi = totalMeters * 0.000621371;
+    results.appendChild(Utils.createElement('div', { className: 'plugin-panel-header' },
+      `${order.length} stops · ${totalMi.toFixed(1)} mi · ~${this._fmtDuration(totalSeconds)} drive (roads)`));
+
+    const list = Utils.createElement('div', { className: 'route-list' });
+    let cumMeters = 0;
+    order.forEach((p, i) => {
+      if (i > 0) cumMeters += (legMeters[i - 1] || 0);
+      const row = Utils.createElement('div', { className: 'route-list-row' });
+      row.appendChild(Utils.createElement('span', { className: 'route-num' }, String(i + 1)));
+      row.appendChild(Utils.createElement('span', { className: 'route-name' }, p.name));
+      row.appendChild(Utils.createElement('span', { className: 'route-dist' },
+        i === 0 ? 'start' : `${(cumMeters * 0.000621371).toFixed(1)} mi`));
+      list.appendChild(row);
+    });
+    results.appendChild(list);
+    this._api.ui.toast.success(`Route: ${order.length} stops, ${totalMi.toFixed(1)} mi by road`);
+  },
+
+  _renderResults(order, mph, note) {
+    const results = this._drawerBody && this._drawerBody.querySelector('#routeResults');
+    if (!results) return;
+    results.innerHTML = '';
+
+    if (note) {
+      this._api.ui.toast.warning(note);
+      results.appendChild(Utils.createElement('div', { className: 'no-data-msg' }, note));
+    }
 
     const totalKm = this._routeLength(order);
     const totalMi = totalKm * 0.621371;
@@ -193,7 +289,7 @@ const RouteOptimizerPlugin = {
     const timeStr = hours < 1 ? `${Math.round(hours * 60)} min` : `${Math.floor(hours)}h ${Math.round((hours % 1) * 60)}m`;
 
     results.appendChild(Utils.createElement('div', { className: 'plugin-panel-header' },
-      `${order.length} stops · ${totalMi.toFixed(1)} mi · ~${timeStr} drive`));
+      `${order.length} stops · ${totalMi.toFixed(1)} mi · ~${timeStr} drive (straight-line)`));
 
     const list = Utils.createElement('div', { className: 'route-list' });
     let cum = 0;
@@ -206,10 +302,10 @@ const RouteOptimizerPlugin = {
       list.appendChild(row);
     });
     results.appendChild(list);
-    this._api.ui.toast.success(`Route: ${order.length} stops, ${totalMi.toFixed(1)} mi`);
   },
 
   _clearRoute() {
+    this._routeToken++;   // invalidate any in-flight directions callback
     if (this._polyline) { this._polyline.setMap(null); this._polyline = null; }
     this._markers.forEach(m => m.setMap(null));
     this._markers = [];

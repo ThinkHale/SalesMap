@@ -86,22 +86,37 @@ const ImportController = {
     nameGroup.appendChild(nameInput);
     body.appendChild(nameGroup);
 
-    // Column mappings
+    const currentMapping = templateMatch ? { ...data.columnMap, ...templateMatch.template.mapping } : { ...data.columnMap };
+
+    // Feature name field — prominent, since it labels every feature in the layer menu.
+    const nameFieldGroup = Utils.createElement('div', { className: 'form-group' });
+    nameFieldGroup.appendChild(Utils.createElement('label', { className: 'form-label' }, 'Feature name field'));
+    nameFieldGroup.appendChild(Utils.createElement('div', { className: 'import-section-hint' },
+      'Which column labels each feature in the layer menu and on the map.'));
+    const nameFieldSel = Utils.createElement('select', { className: 'form-control', 'data-field': 'name' });
+    nameFieldSel.appendChild(Utils.createElement('option', { value: '' }, '— none (features will be Untitled) —'));
+    data.originalColumns.forEach(col => {
+      const opt = Utils.createElement('option', { value: col });
+      opt.textContent = col;
+      if (currentMapping.name === col) opt.selected = true;
+      nameFieldSel.appendChild(opt);
+    });
+    nameFieldGroup.appendChild(nameFieldSel);
+    body.appendChild(nameFieldGroup);
+
+    // Column mappings for the remaining known fields (name handled above).
     const colSection = Utils.createElement('div', { className: 'import-col-section' });
-    const colTitle = Utils.createElement('div', { className: 'import-section-title' }, 'Column Mapping');
-    colSection.appendChild(colTitle);
+    colSection.appendChild(Utils.createElement('div', { className: 'import-section-title' }, 'Column Mapping'));
 
     const colGrid = Utils.createElement('div', { className: 'column-mapping-grid' });
-    const supportedFields = Object.keys(AppConfig.csvParser.supportedColumns);
-    const currentMapping = templateMatch ? { ...data.columnMap, ...templateMatch.template.mapping } : { ...data.columnMap };
+    const supportedFields = Object.keys(AppConfig.csvParser.supportedColumns).filter(f => f !== 'name');
 
     supportedFields.forEach(field => {
       const row = Utils.createElement('div', { className: 'col-map-row' });
       const lbl = Utils.createElement('label', { className: 'col-map-label' });
       lbl.textContent = field;
       const sel = Utils.createElement('select', { className: 'form-control form-control-sm', 'data-field': field });
-      const emptyOpt = Utils.createElement('option', { value: '' }, '— not mapped —');
-      sel.appendChild(emptyOpt);
+      sel.appendChild(Utils.createElement('option', { value: '' }, '— not mapped —'));
       data.originalColumns.forEach(col => {
         const opt = Utils.createElement('option', { value: col });
         opt.textContent = col;
@@ -115,6 +130,28 @@ const ImportController = {
     colSection.appendChild(colGrid);
     body.appendChild(colSection);
 
+    // Additional fields — any unmapped columns, kept as custom properties the user
+    // can sort, filter, and style by (e.g. a "Tenure" column with no built-in field).
+    const mappedCols = new Set(Object.values(currentMapping));
+    const customCandidates = data.originalColumns.filter(c => !mappedCols.has(c));
+    if (customCandidates.length > 0) {
+      const customSection = Utils.createElement('div', { className: 'import-col-section' });
+      customSection.appendChild(Utils.createElement('div', { className: 'import-section-title' }, 'Additional fields'));
+      customSection.appendChild(Utils.createElement('div', { className: 'import-section-hint' },
+        'Imported as custom properties you can sort, filter, and style by. Uncheck any you don\'t need.'));
+      const customList = Utils.createElement('div', { className: 'import-custom-fields' });
+      customCandidates.forEach(col => {
+        const row = Utils.createElement('label', { className: 'import-custom-field' });
+        const cb = Utils.createElement('input', { type: 'checkbox', 'data-col': col });
+        cb.checked = true;
+        row.appendChild(cb);
+        row.appendChild(document.createTextNode(' ' + col));
+        customList.appendChild(row);
+      });
+      customSection.appendChild(customList);
+      body.appendChild(customSection);
+    }
+
     // Summary
     const summary = Utils.createElement('div', { className: 'import-summary' });
     summary.textContent = `${data.rowCount} rows · ${data.originalColumns.length} columns · Detected type: ${data.type}`;
@@ -126,7 +163,7 @@ const ImportController = {
     saveTplBtn.addEventListener('click', () => {
       const name = prompt('Template name:');
       if (name) {
-        const mapping = this._readColumnMapping(colGrid);
+        const mapping = this._readColumnMapping(body);
         csvParser.saveTemplate(name, mapping);
         toastManager.success(`Template "${name}" saved`);
       }
@@ -138,17 +175,19 @@ const ImportController = {
     const nextBtn = Utils.createElement('button', { className: 'btn btn-primary import-next-btn' }, 'Validate & Continue →');
     nextBtn.addEventListener('click', () => {
       const layerName = nameInput.value.trim() || 'Imported Layer';
-      const mapping = this._readColumnMapping(colGrid);
+      const mapping = this._readColumnMapping(body);
+      const customColumns = [...body.querySelectorAll('.import-custom-fields input[data-col]:checked')]
+        .map(c => c.getAttribute('data-col'));
       const dataType = AppRegistry.require('csvParser').detectDataType(mapping);
       const validation = AppRegistry.require('csvParser').validateData(data.rawData, mapping, dataType);
-      this._renderWizardStep2(body, validation, { layerName, mapping, dataType });
+      this._renderWizardStep2(body, validation, { layerName, mapping, dataType, customColumns });
     });
     body.appendChild(nextBtn);
   },
 
-  _readColumnMapping(colGrid) {
+  _readColumnMapping(container) {
     const mapping = {};
-    colGrid.querySelectorAll('select[data-field]').forEach(sel => {
+    container.querySelectorAll('select[data-field]').forEach(sel => {
       if (sel.value) mapping[sel.getAttribute('data-field')] = sel.value;
     });
     return mapping;
@@ -215,7 +254,8 @@ const ImportController = {
         const features = AppRegistry.require('csvParser').extractFeatures(
           validation.validRows,
           importConfig.mapping,
-          importConfig.dataType
+          importConfig.dataType,
+          { customColumns: importConfig.customColumns }
         );
         this._finishImport(features, importConfig.layerName, importConfig.dataType);
       }
@@ -262,7 +302,11 @@ const ImportController = {
       }
     ).then(({ geocoded, failed }) => {
       if (this._geocodingCancelled) return;
-      const features = AppRegistry.require('csvParser').extractFeatures(geocoded, importConfig.mapping, 'point');
+      // Geocoding adds latitude/longitude columns to each row — map them so
+      // extractFeatures treats them as the point geometry.
+      const geoMapping = { ...importConfig.mapping, latitude: 'latitude', longitude: 'longitude' };
+      const features = AppRegistry.require('csvParser').extractFeatures(
+        geocoded, geoMapping, 'point', { customColumns: importConfig.customColumns });
       if (failed.length > 0) {
         toastManager.warning(`${failed.length} addresses could not be geocoded and were skipped`);
       }

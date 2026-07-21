@@ -39,7 +39,9 @@ const AppConfig = Object.freeze({
 
   marker: Object.freeze({
     pinPath: 'M 0,0 C -2,-20 -10,-22 -10,-30 A 10,10 0 1,1 10,-30 C 10,-22 2,-20 0,0 z',
-    scale: 0.7,
+    // Default single-marker size, tuned so a lone pin reads close to the smallest
+    // cluster pin instead of getting lost. Users can rescale via the Pin Size slider.
+    scale: 1.4,
     strokeWeight: 1.5,
     strokeColor: '#ffffff',
     fillOpacity: 0.9
