@@ -986,6 +986,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .layer-color-swatch { width: 18px; height: 18px; border-radius: 5px; border-width: 1px; }
 .layer-name { color: var(--text); font-size: 13px; font-weight: 650; }
 .layer-meta { color: var(--text-muted); font-size: 11px; margin-top: 3px; text-transform: capitalize; }
+.layer-item.draw-target .layer-meta { color: var(--brand-dark); font-weight: 650; }
+.layer-info:focus-visible { border-radius: 4px; outline: 3px solid var(--focus); outline-offset: 2px; }
 .layer-features { margin-left: 44px; padding: 4px 0 4px 10px; border-left-color: #cfd8e1; }
 .feature-row { min-height: 36px; }
 

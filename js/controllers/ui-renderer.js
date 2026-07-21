@@ -183,9 +183,13 @@ const UIRenderer = {
     const nameEl = Utils.createElement('div', { className: 'layer-name' });
     nameEl.textContent = layer.name;
     const meta = Utils.createElement('div', { className: 'layer-meta' });
-    meta.textContent = `${features.length} features · ${layer.type}`;
+    meta.textContent = `${features.length} features · ${layer.type}${isTarget ? ' · Adding here' : ''}`;
     info.appendChild(nameEl);
     info.appendChild(meta);
+    info.tabIndex = 0;
+    info.setAttribute('role', 'button');
+    info.setAttribute('aria-pressed', String(isTarget));
+    info.title = isTarget ? 'New map items will be added to this layer' : 'Use this layer for new map items';
 
     const menuBtn = Utils.createElement('button', { className: 'layer-menu-btn', title: 'Layer options' });
     menuBtn.innerHTML = '<i class="ph ph-dots-three"></i>';
@@ -200,10 +204,17 @@ const UIRenderer = {
     el.appendChild(info);
     el.appendChild(menuBtn);
 
-    // Click layer name area to fit bounds
+    // Selecting a layer makes it the destination for newly drawn items.
     info.addEventListener('click', () => {
-      layerManager.fitToLayer(layer.id);
+      this._setDrawTarget(layer, sm);
     });
+    info.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        this._setDrawTarget(layer, sm);
+      }
+    });
+    info.addEventListener('dblclick', () => layerManager.fitToLayer(layer.id));
 
     // Drag to reorder
     el.draggable = true;
@@ -296,6 +307,13 @@ const UIRenderer = {
     layerManager.moveLayer(draggedLayerId, targetLayerId);
   },
 
+  _setDrawTarget(layer, sm) {
+    if (sm.get('targetLayerForNewFeature') === layer.id) return;
+    sm.set('targetLayerForNewFeature', layer.id);
+    this.renderLayerTree();
+    toastManager.info(`New items will be added to “${layer.name}”.`);
+  },
+
   _showLayerContextMenu(e, layer, layerManager, sm) {
     // Build a temporary context menu
     let menu = document.getElementById('layerContextMenu');
@@ -310,7 +328,7 @@ const UIRenderer = {
       { label: 'Style Layer', action: () => eventBus.emit('layer.styler.open', { layerId: layer.id }) },
       { label: 'Layer Settings', action: () => this._showLayerSettings(layer, layerManager) },
       { label: 'Zoom to Layer', action: () => layerManager.fitToLayer(layer.id) },
-      { label: 'Set as Draw Target', action: () => { sm.set('targetLayerForNewFeature', layer.id); this.renderLayerTree(); toastManager.info(`Draw target: "${layer.name}"`); } },
+      { label: 'Use for New Items', action: () => this._setDrawTarget(layer, sm) },
       { label: 'Toggle Labels', action: () => this._toggleLayerLabels(layer, layerManager) },
       { label: 'Export Layer', action: () => this._exportLayer(layer) },
       { label: '── Groups ──', action: null },

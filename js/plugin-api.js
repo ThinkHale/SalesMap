@@ -351,10 +351,11 @@ class PluginManager {
         const [iconClass, label] = pluginLabels[id] || ['ph-puzzle-piece', def.name];
         const icon = Utils.createElement('i', { className: `ph ${iconClass}` });
         const labelEl = Utils.createElement('span', {}, label);
-        const menuIcon = Utils.createElement('i', { className: 'ph ph-caret-down plugin-caret' });
         btn.appendChild(icon);
         btn.appendChild(labelEl);
-        btn.appendChild(menuIcon);
+        if (!def.headerToggle) {
+          btn.appendChild(Utils.createElement('i', { className: 'ph ph-caret-down plugin-caret' }));
+        }
         if (opts.onClick) btn.addEventListener('click', opts.onClick);
         const toolbar = document.getElementById('pluginToolbarSlot');
         if (toolbar) toolbar.appendChild(btn);
