@@ -1,6 +1,6 @@
 // sw.js — Service Worker for offline-first caching
 
-const CACHE_NAME = 'salesmap-v13';
+const CACHE_NAME = 'salesmap-v14';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -23,6 +23,7 @@ const STATIC_ASSETS = [
   './plugins/geo-export.js',
   './plugins/area-measure.js',
   './plugins/radius-tool.js',
+  './plugins/scout-assistant.js',
   './js/firebase-config.js',
   './js/geocoding-service.js',
   './js/csv-parser.js',
@@ -73,14 +74,17 @@ self.addEventListener('activate', event => {
 self.addEventListener('fetch', event => {
   const url = new URL(event.request.url);
 
-  // Skip Firebase, Google Maps, and CDN requests (always network)
+  // Skip Firebase, Google Maps, OpenAI, and CDN requests (always network)
   if (
     url.hostname.includes('firebase') ||
     url.hostname.includes('googleapis') ||
     url.hostname.includes('gstatic') ||
     url.hostname.includes('cdnjs') ||
     url.hostname.includes('unpkg') ||
-    url.hostname.includes('maps.google')
+    url.hostname.includes('maps.google') ||
+    url.hostname.includes('openai') ||
+    url.hostname.includes('cloudfunctions') ||
+    url.hostname.includes('run.app')
   ) {
     return;
   }
