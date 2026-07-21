@@ -10,6 +10,7 @@ const DataFilterPlugin = {
   description: 'Show or hide features across all layers by tier, BDM, state, revenue range, and other fields.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'map.read', 'map.write', 'ui.slot:toolbar', 'ui.modal', 'ui.toast', 'events.listen'],
   configSchema: {},

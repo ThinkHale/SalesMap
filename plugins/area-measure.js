@@ -9,6 +9,7 @@ const AreaMeasurePlugin = {
   description: 'Report the geodesic area (acres, sq mi, km²) of polygon features, per feature and per layer.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'map.read', 'ui.slot:toolbar', 'ui.modal', 'ui.toast'],
   configSchema: {},

@@ -9,6 +9,7 @@ const RouteOptimizerPlugin = {
   description: 'Order a layer\'s pins into an efficient route (nearest-neighbor + 2-opt) with a numbered day plan.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'map.read', 'map.write', 'ui.slot:toolbar', 'ui.modal', 'ui.toast'],
   configSchema: {},

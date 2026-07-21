@@ -116,6 +116,7 @@ class PluginManager {
     const p = this.plugins.get(pluginId);
     if (!p) return;
     p.enabled = true;
+    this._setPluginUIVisible(pluginId, true);
     try { if (typeof p.def.onEnable === 'function') p.def.onEnable(); } catch (e) { AppErrorHandler.handle(e, `plugin.onEnable:${pluginId}`); }
     eventBus.emit('plugin.enabled', { pluginId });
   }
@@ -125,7 +126,20 @@ class PluginManager {
     if (!p) return;
     p.enabled = false;
     try { if (typeof p.def.onDisable === 'function') p.def.onDisable(); } catch (e) { AppErrorHandler.handle(e, `plugin.onDisable:${pluginId}`); }
+    this._setPluginUIVisible(pluginId, false);
     eventBus.emit('plugin.disabled', { pluginId });
+  }
+
+  // Show/hide every UI-slot element (toolbar button, sidebar panel, menu item)
+  // a plugin contributed, so a disabled plugin leaves no orphaned controls.
+  _setPluginUIVisible(pluginId, visible) {
+    Object.keys(this._uiSlots).forEach(slot => {
+      this._uiSlots[slot].forEach(item => {
+        if (item.pluginId === pluginId && item.element) {
+          item.element.style.display = visible ? '' : 'none';
+        }
+      });
+    });
   }
 
   destroy(pluginId) {
@@ -520,10 +534,15 @@ const pluginManager = new PluginManager();
 AppRegistry.register('pluginRegistry', pluginRegistry);
 AppRegistry.register('pluginManager', pluginManager);
 
-// Restore persisted plugin enable/disable states
+// Restore plugin enable/disable states. A stored user choice always wins;
+// otherwise a plugin starts disabled when its manifest sets defaultEnabled: false.
 function restorePluginStates() {
   const states = storageService.get('pluginStates') || {};
   pluginManager.getAllStatus().forEach(({ id }) => {
-    if (states[id] === false) pluginManager.disable(id);
+    const def = pluginRegistry.getDefinition(id);
+    const enabled = (id in states)
+      ? states[id] !== false
+      : !(def && def.defaultEnabled === false);
+    if (!enabled) pluginManager.disable(id);
   });
 }

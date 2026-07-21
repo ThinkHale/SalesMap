@@ -9,6 +9,7 @@ const GeoExportPlugin = {
   description: 'Download your layers as GeoJSON or KML for use in QGIS, ArcGIS, Google Earth, and other GIS tools.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'ui.slot:toolbar', 'ui.modal', 'ui.toast'],
   configSchema: {},

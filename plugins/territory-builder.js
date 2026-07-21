@@ -12,6 +12,7 @@ const TerritoryBuilderPlugin = {
   description: 'Assign accounts to territory polygons with per-territory rollups, or auto-generate N territories from a point layer.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'layers.write', 'map.read', 'map.write', 'ui.slot:toolbar', 'ui.modal', 'ui.toast'],
   configSchema: {},

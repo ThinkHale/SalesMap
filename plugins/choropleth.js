@@ -9,6 +9,7 @@ const ChoroplethPlugin = {
   description: 'Shade polygons along a color gradient scaled to a numeric field (revenue, count, score) with a legend.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  defaultEnabled: false,
 
   permissions: ['layers.read', 'map.read', 'ui.slot:toolbar', 'ui.modal', 'ui.toast', 'events.listen'],
   configSchema: {},
