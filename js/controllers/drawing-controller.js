@@ -3,20 +3,64 @@
 const DrawingController = {
   _targetLayerId: null,
   _hintEl: null,
+  _pendingLabel: '',
+
+  _ensureTargetLayer(type) {
+    const sm = AppRegistry.require('stateManager');
+    const layerManager = AppRegistry.require('layerManager');
+    const existingId = sm.get('targetLayerForNewFeature');
+    if (existingId && layerManager.getLayer(existingId)) return existingId;
+
+    const isArea = type === 'polygon' || type === 'freehand';
+    const layerName = isArea ? 'Drawn territories' : 'Map notes';
+    const layerType = isArea ? 'polygon' : 'point';
+    const reusable = layerManager.getAllLayers().find(layer => layer.name === layerName);
+    if (reusable) {
+      sm.set('targetLayerForNewFeature', reusable.id);
+      return reusable.id;
+    }
+
+    const command = new CreateLayerCommand(layerManager, layerName, [], layerType, { createdBy: 'drawing' });
+    AppRegistry.require('commandHistory').execute(command);
+    sm.set('targetLayerForNewFeature', command.layerId);
+    SyncController.scheduleSave();
+    toastManager.info(`Created “${layerName}” for your drawing.`);
+    return command.layerId;
+  },
 
   startDrawing(type) {
     const mapManager = AppRegistry.require('mapManager');
     const sm = AppRegistry.require('stateManager');
 
-    this._targetLayerId = sm.get('targetLayerForNewFeature');
-    if (!this._targetLayerId) {
-      toastManager.error('Select a target layer first (right-click a layer → "Set as draw target")');
-      return;
-    }
+    this._targetLayerId = this._ensureTargetLayer(type);
 
     sm.set('drawingMode', type);
     mapManager.startDrawing(type);
     this._showDrawingHint(type);
+  },
+
+  startTextLabel() {
+    drawerManager.open(body => {
+      const wrapper = Utils.createElement('div', { className: 'label-setup' });
+      const intro = Utils.createElement('p', { className: 'label-setup-copy' }, 'Enter the label first, then click where it should appear on the map.');
+      const label = Utils.createElement('label', { className: 'form-label', for: 'mapLabelText' }, 'Label text');
+      const input = Utils.createElement('input', { id: 'mapLabelText', className: 'form-control', type: 'text', maxlength: '80', placeholder: 'e.g. Priority market' });
+      const addBtn = Utils.createElement('button', { className: 'btn btn-primary label-place-btn' }, 'Place label on map');
+      const begin = () => {
+        const value = input.value.trim();
+        if (!value) { toastManager.warning('Enter label text first.'); input.focus(); return; }
+        this._pendingLabel = value;
+        drawerManager.close();
+        this.startDrawing('label');
+        const cancel = document.getElementById('cancelDrawBtn');
+        if (cancel) cancel.style.display = '';
+      };
+      addBtn.addEventListener('click', begin);
+      input.addEventListener('keydown', event => { if (event.key === 'Enter') begin(); });
+      wrapper.appendChild(intro); wrapper.appendChild(label); wrapper.appendChild(input); wrapper.appendChild(addBtn);
+      body.appendChild(wrapper);
+      setTimeout(() => input.focus(), 50);
+    }, 'Add text label');
   },
 
   cancelDrawing() {
@@ -24,6 +68,7 @@ const DrawingController = {
     const sm = AppRegistry.require('stateManager');
     mapManager.stopDrawing();
     sm.set('drawingMode', null);
+    this._pendingLabel = '';
     this._hideDrawingHint();
   },
 
@@ -50,6 +95,7 @@ const DrawingController = {
     syncController.scheduleSave();
     this._hideDrawingHint();
     sm.set('drawingMode', null);
+    this._pendingLabel = '';
     const cancelBtn = document.getElementById('cancelDrawBtn');
     if (cancelBtn) cancelBtn.style.display = 'none';
 
@@ -62,19 +108,21 @@ const DrawingController = {
 
   _shapeToFeature(shape) {
     const id = Utils.generateId('feature');
-    if (shape.type === 'point') {
+    if (shape.type === 'point' || shape.type === 'label') {
+      const isLabel = shape.type === 'label';
       return {
         id,
-        name: 'New Point',
+        name: isLabel ? (this._pendingLabel || 'New Label') : 'New Point',
         latitude: shape.latLng.lat(),
         longitude: shape.latLng.lng(),
         description: '',
         tier: '',
         bdm: '',
-        source: 'draw',
+        source: isLabel ? 'label' : 'draw',
+        isTextLabel: isLabel,
         importedAt: Utils.formatDate()
       };
-    } else if (shape.type === 'polygon') {
+    } else if (shape.type === 'polygon' || shape.type === 'freehand') {
       const path = shape.path;
       const coords = path.map(p => `${p.lng()} ${p.lat()}`);
       // Close the ring
@@ -85,14 +133,14 @@ const DrawingController = {
       const lngSum = path.reduce((acc, p) => acc + p.lng(), 0);
       return {
         id,
-        name: 'New Polygon',
+        name: shape.type === 'freehand' ? 'Freehand Shape' : 'New Polygon',
         wkt,
         latitude: latSum / path.length,  // centroid for reference
         longitude: lngSum / path.length,
         description: '',
         tier: '',
         bdm: '',
-        source: 'draw',
+        source: shape.type === 'freehand' ? 'freehand' : 'draw',
         importedAt: Utils.formatDate()
       };
     }
@@ -106,6 +154,10 @@ const DrawingController = {
     if (this._hintEl) {
       if (type === 'polygon') {
         this._hintEl.textContent = 'Click to add vertices. Click first vertex or double-click to close. Esc to cancel.';
+      } else if (type === 'freehand') {
+        this._hintEl.textContent = 'Press and drag on the map to sketch a shape. Release to finish. Esc to cancel.';
+      } else if (type === 'label') {
+        this._hintEl.textContent = 'Click where you want the label to appear. Esc to cancel.';
       } else {
         this._hintEl.textContent = 'Click on the map to place a point. Esc to cancel.';
       }

@@ -88,9 +88,9 @@ const UIRenderer = {
     const el = Utils.createElement('div', { className: 'layer-group' });
     const header = Utils.createElement('div', { className: 'group-header' });
 
-    const arrow = Utils.createElement('span', { className: `group-arrow ${isExpanded ? 'expanded' : ''}` }, isExpanded ? '▾' : '▸');
+    const arrow = Utils.createElement('i', { className: `ph ${isExpanded ? 'ph-caret-down' : 'ph-caret-right'} group-arrow ${isExpanded ? 'expanded' : ''}` });
     const visBtn = Utils.createElement('button', { className: `layer-vis-btn ${group.visible ? '' : 'hidden'}`, title: 'Toggle group visibility' });
-    visBtn.textContent = group.visible ? '👁' : '🚫';
+    visBtn.innerHTML = `<i class="ph ${group.visible ? 'ph-eye' : 'ph-eye-slash'}"></i>`;
     visBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       layerManager.toggleGroupVisibility(group.id, !group.visible);
@@ -103,7 +103,8 @@ const UIRenderer = {
     const countEl = Utils.createElement('span', { className: 'group-count' });
     countEl.textContent = `${group.layerIds.length}`;
 
-    const menuBtn = Utils.createElement('button', { className: 'layer-menu-btn', title: 'Group options' }, '⋯');
+    const menuBtn = Utils.createElement('button', { className: 'layer-menu-btn', title: 'Group options' });
+    menuBtn.innerHTML = '<i class="ph ph-dots-three"></i>';
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._showGroupContextMenu(e, group, layerManager);
@@ -152,7 +153,8 @@ const UIRenderer = {
     const expandBtn = Utils.createElement('button', {
       className: `layer-expand-btn${isExpanded ? ' expanded' : ''}`,
       title: isExpanded ? 'Collapse features' : 'Expand features'
-    }, isExpanded ? '▾' : '▸');
+    });
+    expandBtn.innerHTML = `<i class="ph ${isExpanded ? 'ph-caret-down' : 'ph-caret-right'}"></i>`;
     expandBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (this._expandedLayers.has(layer.id)) {
@@ -164,7 +166,7 @@ const UIRenderer = {
     });
 
     const visBtn = Utils.createElement('button', { className: `layer-vis-btn ${layer.visible ? '' : 'hidden'}`, title: 'Toggle visibility' });
-    visBtn.textContent = layer.visible ? '👁' : '🚫';
+    visBtn.innerHTML = `<i class="ph ${layer.visible ? 'ph-eye' : 'ph-eye-slash'}"></i>`;
     visBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       layerManager.toggleLayerVisibility(layer.id);
@@ -185,7 +187,8 @@ const UIRenderer = {
     info.appendChild(nameEl);
     info.appendChild(meta);
 
-    const menuBtn = Utils.createElement('button', { className: 'layer-menu-btn', title: 'Layer options' }, '⋯');
+    const menuBtn = Utils.createElement('button', { className: 'layer-menu-btn', title: 'Layer options' });
+    menuBtn.innerHTML = '<i class="ph ph-dots-three"></i>';
     menuBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this._showLayerContextMenu(e, layer, layerManager, sm);
@@ -708,10 +711,10 @@ const UIRenderer = {
     if (ap) ap.render();
   },
 
-  // ─── Plugins Modal ──────────────────────────────────────────────────────────
+  // ─── Plugins Menu ───────────────────────────────────────────────────────────
 
-  renderPluginsModal() {
-    const container = document.getElementById('pluginsList');
+  renderPluginsMenu(focusPluginId = null) {
+    const container = document.getElementById('pluginsMenuList');
     if (!container) return;
     container.innerHTML = '';
 
@@ -723,85 +726,103 @@ const UIRenderer = {
       return;
     }
 
-    // Core "Marker Clustering" card — clustering is a built-in service, not a
-    // plugin, but it's surfaced here so its styling/behavior settings live
-    // alongside the other map plugins.
-    if (AppRegistry.has('clusterManager')) {
-      const cm = AppRegistry.get('clusterManager');
-      const cEnabled = cm.getSettings().enabled;
-      const card = Utils.createElement('div', { className: `plugin-card ${cEnabled ? 'enabled' : 'disabled'}` });
-      const ch = Utils.createElement('div', { className: 'plugin-card-header' });
-      ch.appendChild(Utils.createElement('span', { className: 'plugin-name' }, 'Marker Clustering'));
-      ch.appendChild(Utils.createElement('span', { className: 'plugin-version' }, 'core'));
-      card.appendChild(ch);
-      card.appendChild(Utils.createElement('div', { className: 'plugin-desc' },
-        'Groups nearby markers into clusters. Adjust pin size, cluster radius, zoom behavior, and spiderfy.'));
-      const cActions = Utils.createElement('div', { className: 'plugin-actions' });
-      const cSettingsBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, 'Settings');
-      cSettingsBtn.addEventListener('click', () => {
-        drawerManager.open(body => body.appendChild(cm.renderSettingsDrawer()), 'Marker Clustering Settings');
-        modalManager.close('pluginsModal');
-      });
-      const cToggleBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, cEnabled ? 'Disable' : 'Enable');
-      cToggleBtn.addEventListener('click', () => {
-        cm.setEnabled(!cEnabled);
-        this.renderPluginsModal();
-      });
-      cActions.appendChild(cSettingsBtn);
-      cActions.appendChild(cToggleBtn);
-      card.appendChild(cActions);
-      container.appendChild(card);
-    }
-
     statuses.forEach(({ id, name, version, enabled }) => {
-      const card = Utils.createElement('div', { className: `plugin-card ${enabled ? 'enabled' : 'disabled'}` });
+      const def = AppRegistry.require('pluginRegistry').getDefinition(id);
+      const row = Utils.createElement('div', {
+        className: `plugin-menu-item${enabled ? ' enabled' : ''}${id === focusPluginId ? ' requested' : ''}`,
+        'data-plugin-menu-id': id
+      });
 
-      const cardHeader = Utils.createElement('div', { className: 'plugin-card-header' });
+      const cardHeader = Utils.createElement('div', { className: 'plugin-menu-item-header' });
+      const identity = Utils.createElement('div', { className: 'plugin-menu-identity' });
       const nameEl = Utils.createElement('span', { className: 'plugin-name' });
       nameEl.textContent = name;
       const versionEl = Utils.createElement('span', { className: 'plugin-version' });
       versionEl.textContent = `v${version}`;
-      cardHeader.appendChild(nameEl);
-      cardHeader.appendChild(versionEl);
-
-      const def = AppRegistry.require('pluginRegistry').getDefinition(id);
-      if (def && def.description) {
-        const desc = Utils.createElement('div', { className: 'plugin-desc' });
-        desc.textContent = def.description;
-        card.appendChild(cardHeader);
-        card.appendChild(desc);
-      } else {
-        card.appendChild(cardHeader);
-      }
-
-      const actions = Utils.createElement('div', { className: 'plugin-actions' });
-      const toggleBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' });
-      toggleBtn.textContent = enabled ? 'Disable' : 'Enable';
+      identity.appendChild(nameEl);
+      identity.appendChild(versionEl);
+      const toggleBtn = Utils.createElement('button', {
+        className: `plugin-enable-switch${enabled ? ' on' : ''}`,
+        role: 'switch',
+        'aria-checked': String(enabled),
+        'aria-label': `${enabled ? 'Disable' : 'Enable'} ${name}`
+      });
+      toggleBtn.innerHTML = `<span></span>`;
       toggleBtn.addEventListener('click', () => {
         if (enabled) pm.disable(id); else pm.enable(id);
-        // Persist
         const states = storageService.get('pluginStates') || {};
         states[id] = !enabled;
         storageService.set('pluginStates', states);
-        this.renderPluginsModal();
+        this.renderPluginsMenu(id);
       });
+      cardHeader.appendChild(identity);
+      cardHeader.appendChild(toggleBtn);
+      row.appendChild(cardHeader);
 
-      if (def && def.configSchema && Object.keys(def.configSchema).length > 0) {
+      if (def?.description) {
+        const desc = Utils.createElement('div', { className: 'plugin-menu-desc' });
+        desc.textContent = def.description;
+        row.appendChild(desc);
+      }
+
+      if (enabled) {
+        const actions = Utils.createElement('div', { className: 'plugin-menu-actions' });
+        const actionButton = document.querySelector(`#pluginToolbarSlot [data-plugin-id="${id}"]`);
+        if (actionButton) {
+          const actionLabel = id === 'heatmap-overlay' ? 'Toggle' : 'Open';
+          const openBtn = Utils.createElement('button', { className: 'btn btn-sm btn-primary' }, actionLabel);
+          openBtn.addEventListener('click', () => {
+            this.closePluginsMenu();
+            actionButton.click();
+          });
+          actions.appendChild(openBtn);
+        } else if (id === 'layer-styler') {
+          const useBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, 'Use from a layer’s ⋯ menu');
+          useBtn.addEventListener('click', () => {
+            this.closePluginsMenu();
+            toastManager.info('Open a layer’s ⋯ menu and choose Style Layer.');
+          });
+          actions.appendChild(useBtn);
+        }
+
+        if (def?.configSchema && Object.keys(def.configSchema).length > 0) {
         const settingsBtn = Utils.createElement('button', { className: 'btn btn-sm btn-secondary' }, 'Settings');
         settingsBtn.addEventListener('click', () => {
           const settingsUI = pm.buildSettingsUI(id);
           if (settingsUI) {
             drawerManager.open(body => body.appendChild(settingsUI), `${name} Settings`);
-            modalManager.close('pluginsModal');
+              this.closePluginsMenu();
           }
         });
         actions.appendChild(settingsBtn);
-      }
+        }
 
-      actions.appendChild(toggleBtn);
-      card.appendChild(actions);
-      container.appendChild(card);
+        if (def?.headerToggle) {
+          actions.appendChild(Utils.createElement('span', { className: 'plugin-header-note' }, 'Quick control shown in header'));
+        }
+        row.appendChild(actions);
+      }
+      container.appendChild(row);
     });
+  },
+
+  openPluginsMenu(focusPluginId = null) {
+    const menu = document.getElementById('pluginsMenu');
+    const button = document.getElementById('pluginsBtn');
+    if (!menu || !button) return;
+    this.renderPluginsMenu(focusPluginId);
+    menu.hidden = false;
+    button.setAttribute('aria-expanded', 'true');
+    if (focusPluginId) {
+      setTimeout(() => menu.querySelector(`[data-plugin-menu-id="${focusPluginId}"]`)?.scrollIntoView({ block: 'nearest' }), 0);
+    }
+  },
+
+  closePluginsMenu() {
+    const menu = document.getElementById('pluginsMenu');
+    const button = document.getElementById('pluginsBtn');
+    if (menu) menu.hidden = true;
+    button?.setAttribute('aria-expanded', 'false');
   },
 
   // ─── History Buttons ────────────────────────────────────────────────────────

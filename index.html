@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="SalesMapper v4 — Enterprise Sales Territory Mapping">
   <title>SalesMapper v4</title>
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css">
   <link rel="stylesheet" href="css/styles.css">
 </head>
 <body>
@@ -33,48 +34,66 @@
     <select id="profileSelect" title="Select workspace" aria-label="Select workspace">
       <option>Loading...</option>
     </select>
-    <button class="topbar-btn" id="newProfileBtn" title="New workspace">＋</button>
-    <button class="topbar-btn" id="deleteProfileBtn" title="Delete workspace">🗑</button>
+    <button class="topbar-btn topbar-icon-btn" id="newProfileBtn" title="New workspace" aria-label="New workspace"><i class="ph ph-plus"></i></button>
+    <button class="topbar-btn topbar-icon-btn" id="deleteProfileBtn" title="Delete workspace" aria-label="Delete workspace"><i class="ph ph-trash"></i></button>
 
     <div class="topbar-divider"></div>
 
-    <!-- Upload -->
-    <button class="topbar-btn" id="uploadBtn" title="Import CSV / Excel (Ctrl+O)">
-      ⬆ Import
-    </button>
-    <button class="topbar-btn" id="pasteImportBtn" title="Paste CSV data">
-      📋 Paste
-    </button>
+    <div class="command-menu-wrap">
+      <button class="topbar-btn topbar-action-btn" id="addDataMenuBtn" aria-haspopup="menu" aria-expanded="false">
+        <i class="ph ph-database"></i><span>Add data</span><i class="ph ph-caret-down"></i>
+      </button>
+      <div class="command-popover compact-menu" id="addDataMenu" role="menu" hidden>
+        <button id="uploadBtn" role="menuitem"><i class="ph ph-upload-simple"></i><span><strong>Upload file</strong><small>CSV, Excel, or text</small></span></button>
+        <button id="pasteImportBtn" role="menuitem"><i class="ph ph-clipboard-text"></i><span><strong>Paste data</strong><small>Paste rows from a spreadsheet</small></span></button>
+      </div>
+    </div>
     <input type="file" id="csvFileInput" accept=".csv,.xlsx,.xls,.txt" style="display:none;" aria-label="Upload CSV or Excel file">
 
+    <div class="command-menu-wrap">
+      <button class="topbar-btn topbar-action-btn" id="drawMenuBtn" aria-haspopup="menu" aria-expanded="false">
+        <i class="ph ph-polygon"></i><span>Draw</span><i class="ph ph-caret-down"></i>
+      </button>
+      <div class="command-popover draw-menu" id="drawMenu" role="menu" aria-label="Add to map" hidden>
+        <div class="command-popover-title">Add to map</div>
+        <button id="drawPointBtn" role="menuitem"><i class="ph ph-map-pin"></i><span><strong>Point</strong><small>Place a location</small></span></button>
+        <button id="drawPolygonBtn" role="menuitem"><i class="ph ph-polygon"></i><span><strong>Polygon</strong><small>Draw a sales territory</small></span></button>
+        <button id="freeDrawBtn" role="menuitem"><i class="ph ph-pencil-line"></i><span><strong>Free draw</strong><small>Sketch a custom shape</small></span></button>
+        <button id="textLabelBtn" role="menuitem"><i class="ph ph-text-t"></i><span><strong>Text label</strong><small>Add a note to the map</small></span></button>
+      </div>
+    </div>
+
+    <button class="topbar-btn topbar-action-btn" id="planRouteBtn" title="Plan a route"><i class="ph ph-path"></i><span>Plan route</span></button>
+    <button class="topbar-btn" id="cancelDrawBtn" title="Cancel drawing (Esc)" style="display:none;"><i class="ph ph-x"></i><span>Cancel</span></button>
+
     <div class="topbar-divider"></div>
-
-    <!-- Undo/Redo -->
-    <button class="topbar-btn" id="undoBtn" title="Undo (Ctrl+Z)" disabled>↩ Undo</button>
-    <button class="topbar-btn" id="redoBtn" title="Redo (Ctrl+Y)" disabled>↪ Redo</button>
-
-    <div class="topbar-divider"></div>
-
-    <!-- Drawing tools -->
-    <button class="topbar-btn" id="drawPointBtn" title="Draw Point">📍 Point</button>
-    <button class="topbar-btn" id="drawPolygonBtn" title="Draw Polygon">⬡ Polygon</button>
-    <button class="topbar-btn" id="cancelDrawBtn" title="Cancel drawing (Esc)" style="display:none;">✕ Cancel</button>
+    <button class="topbar-btn history-btn" id="undoBtn" title="Undo (Ctrl+Z)" disabled><i class="ph ph-arrow-u-up-left"></i><span>Undo</span></button>
+    <button class="topbar-btn history-btn" id="redoBtn" title="Redo (Ctrl+Y)" disabled><i class="ph ph-arrow-u-up-right"></i><span>Redo</span></button>
 
     <!-- Right side -->
     <div id="topBarRight">
-      <div id="pluginToolbarSlot"></div>
-
-      <button class="topbar-btn" id="distanceToolBtn" title="Measure distance / radius">📏 Measure</button>
-      <button class="topbar-btn" id="exportMapBtn" title="Export view-only map">⬇ Export</button>
-      <button class="topbar-btn" id="shareLinkBtn" title="Share a view-only link">🔗 Share</button>
-      <button class="topbar-btn" id="pluginsBtn" title="Manage plugins">🔌 Plugins</button>
+      <button class="topbar-btn help-btn" id="helpBtn" title="Open getting-started help"><i class="ph ph-question"></i><span>Need help?</span></button>
+      <button class="topbar-btn" id="shareLinkBtn" title="Share a view-only link"><i class="ph ph-share-network"></i><span>Share</span></button>
+      <div class="command-menu-wrap plugins-menu-wrap">
+        <button class="topbar-btn plugins-manage-btn" id="pluginsBtn" title="Manage plugins" aria-haspopup="menu" aria-expanded="false"><i class="ph ph-puzzle-piece"></i><span>Plugins</span><i class="ph ph-caret-down"></i></button>
+        <div class="command-popover plugins-menu" id="pluginsMenu" role="menu" hidden>
+          <div class="plugins-menu-header">
+            <div><strong>Plugins</strong><small>Choose the tools available in this workspace.</small></div>
+            <button id="pluginsMenuClose" aria-label="Close plugins"><i class="ph ph-x"></i></button>
+          </div>
+          <div id="pluginsMenuList">Loading plugins…</div>
+        </div>
+      </div>
+      <div id="pluginToolbarSlot" aria-label="Active plugins"></div>
+      <button class="topbar-btn topbar-icon-btn utility-overflow" id="exportMapBtn" title="Export view-only map" aria-label="Export view-only map"><i class="ph ph-download-simple"></i></button>
+      <button class="topbar-btn topbar-icon-btn utility-overflow" id="distanceToolBtn" title="Measure distance" aria-label="Measure distance"><i class="ph ph-ruler"></i></button>
 
       <div class="topbar-divider"></div>
 
       <!-- Notifications -->
       <div class="notification-btn-wrap">
         <button class="topbar-btn" id="notificationBtn" title="Notifications" aria-label="Notifications">
-          🔔
+          <i class="ph ph-bell"></i>
         </button>
         <span id="notificationBadge" role="status" aria-label="Unread notifications"></span>
       </div>
@@ -84,8 +103,11 @@
   <!-- ── Main Content ─────────────────────────────────────────────────────── -->
   <div id="mainContent">
 
+    <button id="mobileLayersBtn" class="mobile-layers-btn" aria-label="Open layers"><i class="ph ph-stack"></i><span>Layers</span></button>
+
     <!-- ── Sidebar ─────────────────────────────────────────────────────── -->
     <div id="sidebar" role="complementary" aria-label="Layer panel">
+      <button id="mobileSidebarClose" class="mobile-sidebar-close" aria-label="Close layers"><i class="ph ph-x"></i></button>
 
       <!-- Tab buttons -->
       <div class="sidebar-tabs" role="tablist">
@@ -98,11 +120,11 @@
       <div id="tab-layers" class="sidebar-tab-content active" role="tabpanel">
         <!-- Layers toolbar -->
         <div class="sidebar-toolbar">
-          <button class="btn btn-primary btn-sm" id="newLayerBtn" title="Create a new empty layer">+ New Layer</button>
-          <button class="btn btn-secondary btn-sm" id="fitAllBtn" title="Fit map to all layers">⤢ Fit All</button>
-          <button class="btn btn-secondary btn-sm" id="zoomInBtn" title="Zoom in">+</button>
-          <button class="btn btn-secondary btn-sm" id="zoomOutBtn" title="Zoom out">−</button>
-          <button class="btn btn-secondary btn-sm" id="resetViewBtn" title="Reset to default view">⌂</button>
+          <button class="btn btn-primary btn-sm" id="newLayerBtn" title="Create a new empty layer"><i class="ph ph-plus"></i> New layer</button>
+          <button class="btn btn-secondary btn-sm" id="fitAllBtn" title="Fit map to all layers"><i class="ph ph-arrows-out"></i> Fit all</button>
+          <button class="btn btn-secondary btn-sm icon-only" id="zoomInBtn" title="Zoom in" aria-label="Zoom in"><i class="ph ph-plus"></i></button>
+          <button class="btn btn-secondary btn-sm icon-only" id="zoomOutBtn" title="Zoom out" aria-label="Zoom out"><i class="ph ph-minus"></i></button>
+          <button class="btn btn-secondary btn-sm icon-only" id="resetViewBtn" title="Reset to default view" aria-label="Reset view"><i class="ph ph-crosshair"></i></button>
           <label class="btn btn-secondary btn-sm settings-toggle" title="Real-time sync" style="cursor:pointer;">
             <input type="checkbox" id="realtimeSyncToggle" checked style="margin-right:4px;"> Sync
           </label>
@@ -142,7 +164,7 @@
       <!-- Search bar (floating over map) -->
       <div id="searchBar" role="search">
         <input type="text" id="mapSearchInput" placeholder="Search address or place..." aria-label="Search location">
-        <button id="mapSearchBtn" aria-label="Search">🔍</button>
+        <button id="mapSearchBtn" aria-label="Search"><i class="ph ph-magnifying-glass"></i></button>
       </div>
 
       <!-- Drawing hint (floating over map) -->
@@ -153,9 +175,9 @@
 
       <!-- Map controls (floating) -->
       <div id="mapControlsPanel" aria-label="Map controls">
-        <button class="map-ctrl-btn" id="zoomInBtn2" title="Zoom in" onclick="AppRegistry.get('mapManager')?.zoomIn()">+</button>
-        <button class="map-ctrl-btn" id="zoomOutBtn2" title="Zoom out" onclick="AppRegistry.get('mapManager')?.zoomOut()">−</button>
-        <button class="map-ctrl-btn" id="fitAllBtn2" title="Fit all" onclick="AppRegistry.get('layerManager')?.fitToAll()">⤢</button>
+        <button class="map-ctrl-btn" id="zoomInBtn2" title="Zoom in" onclick="AppRegistry.get('mapManager')?.zoomIn()"><i class="ph ph-plus"></i></button>
+        <button class="map-ctrl-btn" id="zoomOutBtn2" title="Zoom out" onclick="AppRegistry.get('mapManager')?.zoomOut()"><i class="ph ph-minus"></i></button>
+        <button class="map-ctrl-btn" id="fitAllBtn2" title="Fit all" onclick="AppRegistry.get('layerManager')?.fitToAll()"><i class="ph ph-arrows-out"></i></button>
       </div>
     </div>
     <!-- /mapContainer -->
@@ -174,20 +196,6 @@
 
 </div>
 <!-- /appShell -->
-
-<!-- ── Plugins Modal ─────────────────────────────────────────────────────── -->
-<div id="pluginsModal" class="modal" role="dialog" aria-modal="true" aria-labelledby="pluginsModalTitle" style="display:none;">
-  <div class="modal-content">
-    <div class="modal-header">
-      <div class="modal-title" id="pluginsModalTitle">Plugins</div>
-      <button class="modal-close" data-close-modal="pluginsModal" aria-label="Close">×</button>
-    </div>
-    <div id="pluginsList">Loading...</div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" data-close-modal="pluginsModal">Close</button>
-    </div>
-  </div>
-</div>
 
 <!-- ── Context menus (populated dynamically) ──────────────────────────────���── -->
 <div id="layerContextMenu" class="context-menu" role="menu" style="display:none;"></div>
@@ -249,11 +257,24 @@
 <script src="js/controllers/ui-renderer.js"></script>
 <script src="js/app.js"></script>
 
-<!-- Google Maps — LAST, triggers initMap callback -->
-<!-- Replace YOUR_GOOGLE_MAPS_API_KEY with your actual key -->
-<script async
-  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBykC-Ud0Av1cNBFcfelKjBQojtzwC3sws&loading=async&libraries=places,marker,visualization,geometry&callback=initMap"
-  onerror="loadingManager.forceHide(); toastManager.error('Google Maps failed to load. Check your API key in config.js and index.html.')">
+<!-- Google Maps — LAST, loaded from the single key in js/config.js -->
+<script>
+  (() => {
+    const script = document.createElement('script');
+    const params = new URLSearchParams({
+      key: AppConfig.googleMapsApiKey,
+      loading: 'async',
+      libraries: 'places,marker,visualization,geometry',
+      callback: 'initMap'
+    });
+    script.async = true;
+    script.src = `https://maps.googleapis.com/maps/api/js?${params}`;
+    script.onerror = () => {
+      loadingManager.forceHide();
+      toastManager.error('Google Maps failed to load. Check the API key and allowed website domains.');
+    };
+    document.head.appendChild(script);
+  })();
 </script>
 
 </body>

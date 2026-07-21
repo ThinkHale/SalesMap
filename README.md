@@ -30,6 +30,23 @@ SalesMap is a browser-based sales territory mapping application built with Googl
 3. Serve the directory using a local server (for example, `npx serve .` or `python3 -m http.server`).
 4. Open the app in a browser.
 
+## Production deployment
+
+The repository includes a GitHub Pages workflow at `.github/workflows/deploy-pages.yml`. It validates the JavaScript, stages only the static application files, and deploys whenever `main` is pushed. It can also be run manually from GitHub Actions.
+
+Before the first production test:
+
+1. In the repository's **Settings → Pages**, select **GitHub Actions** as the publishing source.
+2. In Google Cloud Console, restrict the browser key in `js/config.js` to **Websites** and add the deployed origins. For the default project Pages URL, allow:
+   - `https://thinkhale.github.io/SalesMap/*`
+   - `https://thinkhale.github.io/SalesMap/`
+3. Ensure **Maps JavaScript API**, **Places API**, and **Geocoding API** are enabled for that key.
+4. In Firebase Authentication, add `thinkhale.github.io` (and any future custom domain) to **Authorized domains**.
+5. Review Firebase Realtime Database rules before sharing outside the company. The browser Firebase configuration is expected to be public; access control belongs in Authentication and Database Rules.
+6. Open both the editor route and a generated share link after deployment, then confirm imports, drawing, plugins, saving, and reload behavior.
+
+The Google Maps message shown on `127.0.0.1` or an unapproved VS Code preview origin means that origin is missing from the API key's website restrictions. It does not indicate a rendering bug in SalesMap.
+
 ## Development
 
 - All app logic is written in plain JavaScript and loaded in dependency order.

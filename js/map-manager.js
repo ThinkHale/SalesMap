@@ -20,6 +20,10 @@ class MapManager {
     this.searchMarker = null;
     this._mapClickListener = null;
     this._mapDblClickListener = null;
+    this._mapMouseDownListener = null;
+    this._mapMouseMoveListener = null;
+    this._mapMouseUpListener = null;
+    this._freehandActive = false;
     this._drawingHintEl = null;
     this._overlayClickCallback = null;
   }
@@ -90,6 +94,32 @@ class MapManager {
   _addPointFeature(layerId, feature, color) {
     const layerData = this.layers.get(layerId);
     if (!layerData) return;
+
+    if (feature.isTextLabel) {
+      const labelMarker = new google.maps.Marker({
+        position: { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) },
+        map: layerData.visible ? this.map : null,
+        title: feature.name || 'Map label',
+        label: {
+          text: feature.name || 'Label',
+          color: '#17212b',
+          fontSize: '14px',
+          fontWeight: '600',
+          className: 'salesmap-text-label'
+        },
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 0
+        },
+        zIndex: 2500
+      });
+      labelMarker._featureId = feature.id;
+      labelMarker._layerId = layerId;
+      labelMarker._featureData = feature;
+      labelMarker.addListener('click', () => this._selectFeature(feature, labelMarker, color, layerId));
+      layerData.labels.push(labelMarker);
+      return;
+    }
 
     const tierColor = AppConfig.colors.tierMap[String(feature.tier).toLowerCase()] || null;
     const fillColor = tierColor || color;
@@ -341,6 +371,10 @@ class MapManager {
         bounds.extend(m.getPosition());
         hasPoints = true;
       });
+      layerData.labels.forEach(label => {
+        const position = label.getPosition?.();
+        if (position) { bounds.extend(position); hasPoints = true; }
+      });
       layerData.polygons.forEach(p => {
         p.getPath().forEach(point => { bounds.extend(point); hasPoints = true; });
       });
@@ -477,7 +511,7 @@ class MapManager {
           }
         }
         this._addPolygonVertex(latLng);
-      } else if (this.drawingMode === 'point') {
+      } else if (this.drawingMode === 'point' || this.drawingMode === 'label') {
         this._placePoint(latLng);
       }
     };
@@ -491,9 +525,45 @@ class MapManager {
         // so one spurious vertex was added and must be removed.
         this._closePolygon(true);
       });
-    } else if (mode === 'point') {
+    } else if (mode === 'point' || mode === 'label') {
       this._mapClickListener = this.map.addListener('click', (e) => handleClickAt(e.latLng));
+    } else if (mode === 'freehand') {
+      this.map.setOptions({ draggable: false });
+      this._mapMouseDownListener = this.map.addListener('mousedown', (e) => {
+        this._freehandActive = true;
+        this.polygonPath = [e.latLng];
+        if (this.previewPolyline) this.previewPolyline.setMap(null);
+        this.previewPolyline = new google.maps.Polyline({
+          path: this.polygonPath,
+          strokeColor: AppConfig.drawing.polygonColor,
+          strokeOpacity: AppConfig.drawing.strokeOpacity,
+          strokeWeight: AppConfig.drawing.strokeWeight,
+          map: this.map,
+          clickable: false
+        });
+      });
+      this._mapMouseMoveListener = this.map.addListener('mousemove', (e) => {
+        if (!this._freehandActive) return;
+        const last = this.polygonPath[this.polygonPath.length - 1];
+        if (last && Utils.calculateDistance(last.lat(), last.lng(), e.latLng.lat(), e.latLng.lng()) < 0.02) return;
+        this.polygonPath.push(e.latLng);
+        this.previewPolyline.setPath(this.polygonPath);
+      });
+      this._mapMouseUpListener = this.map.addListener('mouseup', () => this._finishFreehand());
     }
+  }
+
+  _finishFreehand() {
+    if (!this._freehandActive) return;
+    this._freehandActive = false;
+    const path = [...this.polygonPath];
+    if (path.length < 3) {
+      toastManager.warning('Drag a little farther to create a shape.');
+      this.stopDrawing();
+      return;
+    }
+    this.stopDrawing();
+    if (this.onDrawComplete) this.onDrawComplete({ type: 'freehand', path });
   }
 
   _addPolygonVertex(latLng) {
@@ -557,9 +627,10 @@ class MapManager {
   }
 
   _placePoint(latLng) {
+    const type = this.drawingMode === 'label' ? 'label' : 'point';
     this.stopDrawing();
     if (this.onDrawComplete) {
-      this.onDrawComplete({ type: 'point', latLng });
+      this.onDrawComplete({ type, latLng });
     }
   }
 
@@ -572,6 +643,19 @@ class MapManager {
       google.maps.event.removeListener(this._mapDblClickListener);
       this._mapDblClickListener = null;
     }
+    if (this._mapMouseDownListener) {
+      google.maps.event.removeListener(this._mapMouseDownListener);
+      this._mapMouseDownListener = null;
+    }
+    if (this._mapMouseMoveListener) {
+      google.maps.event.removeListener(this._mapMouseMoveListener);
+      this._mapMouseMoveListener = null;
+    }
+    if (this._mapMouseUpListener) {
+      google.maps.event.removeListener(this._mapMouseUpListener);
+      this._mapMouseUpListener = null;
+    }
+    this._freehandActive = false;
     this.tempMarkers.forEach(m => m.setMap(null));
     this.tempMarkers = [];
     if (this.previewPolyline) {
@@ -582,7 +666,7 @@ class MapManager {
     this.drawingMode = null;
     this.ignoreFeatureClicks = false;
     this._overlayClickCallback = null;
-    if (this.map) this.map.setOptions({ draggableCursor: null, disableDoubleClickZoom: false });
+    if (this.map) this.map.setOptions({ draggableCursor: null, disableDoubleClickZoom: false, draggable: true });
   }
 
   // ─── Polygon shape editing ────────────────────────────────────────────────

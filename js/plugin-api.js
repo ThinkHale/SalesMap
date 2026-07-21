@@ -334,10 +334,27 @@ class PluginManager {
       api.ui = api.ui || {};
       api.ui.addToolbarButton = (opts) => {
         const btn = Utils.createElement('button', {
-          className: 'plugin-toolbar-btn',
+          className: `plugin-toolbar-btn${def.headerToggle ? ' plugin-header-toggle' : ' plugin-menu-only'}`,
           title: Utils.escapeHtml(opts.tooltip || opts.label)
         });
-        btn.textContent = opts.icon || opts.label;
+        btn.dataset.pluginId = id;
+        const pluginLabels = {
+          'heatmap-overlay': ['ph-fire', 'Heatmap'],
+          'route-optimizer': ['ph-path', 'Route planner'],
+          'territory-builder': ['ph-polygon', 'Territories'],
+          'data-filter': ['ph-funnel', 'Filter'],
+          'choropleth': ['ph-palette', 'Shading'],
+          'area-measure': ['ph-ruler', 'Area'],
+          'radius-tool': ['ph-circle', 'Radius'],
+          'geo-export': ['ph-export', 'Geo export']
+        };
+        const [iconClass, label] = pluginLabels[id] || ['ph-puzzle-piece', def.name];
+        const icon = Utils.createElement('i', { className: `ph ${iconClass}` });
+        const labelEl = Utils.createElement('span', {}, label);
+        const menuIcon = Utils.createElement('i', { className: 'ph ph-caret-down plugin-caret' });
+        btn.appendChild(icon);
+        btn.appendChild(labelEl);
+        btn.appendChild(menuIcon);
         if (opts.onClick) btn.addEventListener('click', opts.onClick);
         const toolbar = document.getElementById('pluginToolbarSlot');
         if (toolbar) toolbar.appendChild(btn);

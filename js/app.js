@@ -127,6 +127,32 @@ function setupEventBusSubscriptions() {
 
 // ─── DOM Event Listeners ────────────────────────────────────────────────────
 function setupDOMEventListeners() {
+  const closeCommandMenus = (exceptId = null) => {
+    document.querySelectorAll('.command-popover').forEach(menu => {
+      if (menu.id === exceptId) return;
+      menu.hidden = true;
+      const trigger = menu.parentElement?.querySelector('[aria-haspopup="menu"]');
+      trigger?.setAttribute('aria-expanded', 'false');
+    });
+  };
+
+  const wireCommandMenu = (triggerId, menuId) => {
+    const trigger = document.getElementById(triggerId);
+    const menu = document.getElementById(menuId);
+    if (!trigger || !menu) return;
+    trigger.addEventListener('click', (event) => {
+      event.stopPropagation();
+      const willOpen = menu.hidden;
+      closeCommandMenus(menuId);
+      menu.hidden = !willOpen;
+      trigger.setAttribute('aria-expanded', String(willOpen));
+    });
+    menu.addEventListener('click', event => event.stopPropagation());
+  };
+
+  wireCommandMenu('addDataMenuBtn', 'addDataMenu');
+  wireCommandMenu('drawMenuBtn', 'drawMenu');
+
   // ── Keyboard shortcuts ──
   document.addEventListener('keydown', e => {
     // Undo: Ctrl+Z / Cmd+Z
@@ -169,6 +195,7 @@ function setupDOMEventListeners() {
   const uploadBtn = document.getElementById('uploadBtn');
   if (uploadBtn) {
     uploadBtn.addEventListener('click', () => {
+      closeCommandMenus();
       document.getElementById('csvFileInput')?.click();
     });
   }
@@ -177,6 +204,7 @@ function setupDOMEventListeners() {
   const pasteImportBtn = document.getElementById('pasteImportBtn');
   if (pasteImportBtn) {
     pasteImportBtn.addEventListener('click', () => {
+      closeCommandMenus();
       drawerManager.open(body => {
         const wrapper = Utils.createElement('div', { className: 'paste-import-wrapper' });
         const lbl = Utils.createElement('label', { className: 'form-label' }, 'Paste CSV data:');
@@ -197,16 +225,62 @@ function setupDOMEventListeners() {
 
   // ── Drawing tools ──
   document.getElementById('drawPointBtn')?.addEventListener('click', () => {
+    closeCommandMenus();
     DrawingController.startDrawing('point');
     document.getElementById('cancelDrawBtn')?.style && (document.getElementById('cancelDrawBtn').style.display = '');
   });
   document.getElementById('drawPolygonBtn')?.addEventListener('click', () => {
+    closeCommandMenus();
     DrawingController.startDrawing('polygon');
     document.getElementById('cancelDrawBtn')?.style && (document.getElementById('cancelDrawBtn').style.display = '');
   });
   document.getElementById('cancelDrawBtn')?.addEventListener('click', () => {
     DrawingController.cancelDrawing();
     document.getElementById('cancelDrawBtn').style.display = 'none';
+  });
+
+  document.getElementById('freeDrawBtn')?.addEventListener('click', () => {
+    closeCommandMenus();
+    DrawingController.startDrawing('freehand');
+    const cancel = document.getElementById('cancelDrawBtn');
+    if (cancel) cancel.style.display = '';
+  });
+  document.getElementById('textLabelBtn')?.addEventListener('click', () => {
+    closeCommandMenus();
+    DrawingController.startTextLabel();
+  });
+
+  document.getElementById('planRouteBtn')?.addEventListener('click', (event) => {
+    const routeControl = document.querySelector('[data-plugin-id="route-optimizer"]');
+    if (routeControl && routeControl.style.display !== 'none') {
+      routeControl.click();
+      return;
+    }
+    event.stopPropagation();
+    UIRenderer.openPluginsMenu('route-optimizer');
+    toastManager.info('Enable Route Optimizer to plan a route.');
+  });
+
+  document.getElementById('helpBtn')?.addEventListener('click', () => {
+    drawerManager.open(body => {
+      const intro = Utils.createElement('div', { className: 'getting-started' });
+      intro.innerHTML = `
+        <p class="getting-started-lead">Build a useful map in three steps.</p>
+        <button class="getting-started-step" data-help-action="data"><span>1</span><div><strong>Add your data</strong><small>Upload Excel or CSV, or paste rows from a spreadsheet.</small></div><i class="ph ph-arrow-right"></i></button>
+        <button class="getting-started-step" data-help-action="draw"><span>2</span><div><strong>Draw map details</strong><small>Add a point or outline a sales territory.</small></div><i class="ph ph-arrow-right"></i></button>
+        <button class="getting-started-step" data-help-action="plugins"><span>3</span><div><strong>Make it yours</strong><small>Enable heatmaps, routing, styling, and other plugins.</small></div><i class="ph ph-arrow-right"></i></button>`;
+      intro.querySelector('[data-help-action="data"]')?.addEventListener('click', () => { drawerManager.close(); document.getElementById('addDataMenuBtn')?.click(); });
+      intro.querySelector('[data-help-action="draw"]')?.addEventListener('click', () => { drawerManager.close(); document.getElementById('drawMenuBtn')?.click(); });
+      intro.querySelector('[data-help-action="plugins"]')?.addEventListener('click', () => { drawerManager.close(); document.getElementById('pluginsBtn')?.click(); });
+      body.appendChild(intro);
+    }, 'Build your map');
+  });
+
+  document.getElementById('mobileLayersBtn')?.addEventListener('click', () => {
+    document.getElementById('sidebar')?.classList.toggle('mobile-open');
+  });
+  document.getElementById('mobileSidebarClose')?.addEventListener('click', () => {
+    document.getElementById('sidebar')?.classList.remove('mobile-open');
   });
 
   // Hide cancel button when drawing completes or is cancelled via Escape
@@ -302,8 +376,13 @@ function setupDOMEventListeners() {
 
   // ── Plugins modal ──
   document.getElementById('pluginsBtn')?.addEventListener('click', () => {
-    UIRenderer.renderPluginsModal();
-    modalManager.show('pluginsModal');
+    const menu = document.getElementById('pluginsMenu');
+    if (menu?.hidden) UIRenderer.openPluginsMenu();
+    else UIRenderer.closePluginsMenu();
+  });
+  document.getElementById('pluginsMenuClose')?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    UIRenderer.closePluginsMenu();
   });
 
   // ── Export ──
@@ -326,7 +405,7 @@ function setupDOMEventListeners() {
       })
       .finally(() => {
         btn.disabled = false;
-        btn.textContent = '🔗 Share';
+        btn.innerHTML = '<i class="ph ph-share-network"></i><span>Share</span>';
       });
   });
 
@@ -381,6 +460,7 @@ function setupDOMEventListeners() {
 
   // ── Dismiss notification panel when clicking outside ──
   document.addEventListener('click', (e) => {
+    if (!e.target.closest('.command-menu-wrap')) closeCommandMenus();
     const panel = document.getElementById('notificationPanel');
     const btn = document.getElementById('notificationBtn');
     if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && e.target !== btn) {
@@ -432,7 +512,7 @@ function openCommandPalette() {
       { label: 'Draw Point', action: () => { drawerManager.close(); DrawingController.startDrawing('point'); } },
       { label: 'Draw Polygon', action: () => { drawerManager.close(); DrawingController.startDrawing('polygon'); } },
       { label: 'Toggle Distance Tool', action: () => { drawerManager.close(); AppRegistry.get('distanceTool')?.toggle(); } },
-      { label: 'Open Plugins', action: () => { drawerManager.close(); UIRenderer.renderPluginsModal(); modalManager.show('pluginsModal'); } },
+      { label: 'Open Plugins', action: () => { drawerManager.close(); UIRenderer.openPluginsMenu(); } },
       ...layers.map(l => ({
         label: `Go to layer: ${l.name}`,
         action: () => { drawerManager.close(); lm.fitToLayer(l.id); }

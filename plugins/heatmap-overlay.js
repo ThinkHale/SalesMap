@@ -10,6 +10,7 @@ const HeatmapOverlayPlugin = {
   description: 'Renders point layers as a density heatmap using a Google Maps canvas overlay.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  headerToggle: true,
 
   permissions: [
     'layers.read',

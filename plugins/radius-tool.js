@@ -9,6 +9,7 @@ const RadiusToolPlugin = {
   description: 'Drop a radius (or approximate drive-time) circle and summarize the accounts within it.',
   author: 'SalesMapper',
   minAppVersion: '4.0.0',
+  headerToggle: true,
   defaultEnabled: false,
 
   permissions: ['layers.read', 'map.read', 'map.write', 'ui.slot:toolbar', 'ui.modal', 'ui.toast'],
