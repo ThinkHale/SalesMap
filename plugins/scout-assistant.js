@@ -46,7 +46,7 @@ const ScoutAssistantPlugin = {
   },
 
   onEnable()  { if (this._launcher) this._launcher.style.display = 'flex'; },
-  onDisable() { this._closePanel(); if (this._launcher) this._launcher.style.display = 'none'; },
+  onDisable() { this._clearRoute(); this._closePanel(); if (this._launcher) this._launcher.style.display = 'none'; },
   destroy()   {
     this._clearRoute();
     ['scout-launcher', 'scout-panel', 'scout-styles'].forEach(id => document.getElementById(id)?.remove());
@@ -117,10 +117,15 @@ const ScoutAssistantPlugin = {
       '<div class="scout-header">' +
         '<span class="scout-avatar">🧭</span>' +
         '<div class="scout-title">Scout<small>Your map assistant</small></div>' +
+        '<button title="Clear route / overlays Scout drew" data-scout-clear>🧹</button>' +
         '<button title="Close" data-scout-close>&times;</button>' +
       '</div>' +
       '<div class="scout-messages"></div>';
     document.body.appendChild(panel);
+    panel.querySelector('[data-scout-clear]').addEventListener('click', () => {
+      this._clearRoute();
+      this._api.ui.toast.info('Cleared Scout route overlays');
+    });
     panel.querySelector('[data-scout-close]').addEventListener('click', () => this._closePanel());
     this._panel = panel;
     this._messagesEl = panel.querySelector('.scout-messages');
@@ -313,9 +318,12 @@ const ScoutAssistantPlugin = {
       "You are Scout, a friendly, concise assistant embedded in SalesMap, a Google-Maps-based sales territory mapping app.",
       "You help users understand the app and you TAKE ACTIONS on their behalf by calling the provided tools.",
       "Prefer acting over explaining when the user asks you to do something. After acting, briefly confirm what you did.",
+      "A core strength: you can deeply analyze the user's data. Call analyze_data to inspect real property values — numeric aggregates (sum/avg/min/max) and category breakdowns — for a single layer or for all layers together. Do this before answering data questions or making recommendations, rather than guessing. The layer list below only has field names, not values.",
       "When a tool needs a layer, pass its id or exact name. Ask a short clarifying question only if genuinely ambiguous.",
       "The app can import CSV/Excel, draw points/polygons, cluster markers, and has plugins for filtering, choropleth shading, territory building, route optimizing, radius coverage, area measurement, and GeoJSON/KML export. Guide users to these when relevant.",
-      "Keep replies short (1-3 sentences) unless asked for detail. Never invent coordinates; use tools to search or geocode.",
+      "Keep replies short (1-3 sentences) unless asked for detail.",
+      "CRITICAL: never invent or fabricate coordinates. Do not pass made-up lat/lng to add_points. To place points you must get real coordinates from a tool: search_places / geocode_add_point for named places, or suggest_locations for analytical requests.",
+      "For requests like 'best N locations', 'where should I place …', 'optimal spots', or any placement based on existing data, ALWAYS call suggest_locations (which derives real, spread-out points from the user's data) — never guess coordinates yourself.",
       "",
       "Current map view: " + view,
       "Current layers:",
@@ -331,7 +339,8 @@ const ScoutAssistantPlugin = {
   // ── Tool specifications (OpenAI function-calling schema) ──────────────────────
   _toolSpecs() {
     return [
-      { type: 'function', function: { name: 'list_layers', description: 'List the map layers with their fields and feature counts.', parameters: { type: 'object', properties: {} } } },
+      { type: 'function', function: { name: 'list_layers', description: 'List the map layers with their fields and feature counts (names/types only, not values).', parameters: { type: 'object', properties: {} } } },
+      { type: 'function', function: { name: 'analyze_data', description: 'Analyze the actual data values in layers: per field, numeric aggregates (count/min/max/sum/avg) or category breakdowns (top values with counts). Give a layer id/name to analyze one, or omit to analyze every layer individually PLUS a combined all-layers summary. Use this to answer any question about the data and to ground decisions (placement, routing, targeting).', parameters: { type: 'object', properties: { layer: { type: 'string', description: 'Optional layer id/name; omit for all layers + combined.' } } } } },
       { type: 'function', function: { name: 'get_map_view', description: 'Get the current map center and zoom.', parameters: { type: 'object', properties: {} } } },
       { type: 'function', function: { name: 'search_places', description: 'Search Google Places for businesses/points of interest and add the results to the map as a new layer.', parameters: { type: 'object', properties: {
         query: { type: 'string', description: 'What to search for, e.g. "coffee shops", "hospitals in Denver".' },
@@ -353,7 +362,14 @@ const ScoutAssistantPlugin = {
       { type: 'function', function: { name: 'filter_features', description: 'Show only features matching a field condition. Categorical (values) or numeric range (min/max).', parameters: { type: 'object', properties: {
         field: { type: 'string' }, values: { type: 'array', items: { type: 'string' } }, min: { type: 'number' }, max: { type: 'number' }
       }, required: ['field'] } } },
+      { type: 'function', function: { name: 'suggest_locations', description: 'Compute N candidate locations derived from the user\'s existing point data (e.g. best spots for yard signs) and add them as a new layer. Use this for any "best/optimal locations" request instead of inventing coordinates. Strategy "density" returns cluster centers where the data is concentrated; "coverage" spreads points to blanket the whole footprint.', parameters: { type: 'object', properties: {
+        count: { type: 'number', description: 'How many locations (default 10).' },
+        strategy: { type: 'string', enum: ['density', 'coverage'], description: 'density = near concentrations of existing data; coverage = spread evenly across the area.' },
+        layer: { type: 'string', description: 'Optional source layer id/name; defaults to all visible point layers.' },
+        layer_name: { type: 'string' }
+      }, required: ['count'] } } },
       { type: 'function', function: { name: 'clear_filter', description: 'Clear any active feature filter.', parameters: { type: 'object', properties: {} } } },
+      { type: 'function', function: { name: 'clear_route', description: 'Remove the route line and numbered stop markers Scout drew on the map.', parameters: { type: 'object', properties: {} } } },
       { type: 'function', function: { name: 'fit_to_layer', description: 'Zoom/pan the map to fit a layer.', parameters: { type: 'object', properties: { layer: { type: 'string' } }, required: ['layer'] } } },
       { type: 'function', function: { name: 'set_map_view', description: 'Move the map to an address or coordinates.', parameters: { type: 'object', properties: {
         address: { type: 'string' }, lat: { type: 'number' }, lng: { type: 'number' }, zoom: { type: 'number' }
@@ -365,13 +381,16 @@ const ScoutAssistantPlugin = {
   async _runTool(name, args) {
     switch (name) {
       case 'list_layers': return this._toolListLayers();
+      case 'analyze_data': return this._toolAnalyzeData(args);
       case 'get_map_view': return this._toolMapView();
       case 'search_places': return this._toolSearchPlaces(args);
       case 'geocode_add_point': return this._toolGeocodeAdd(args);
       case 'add_points': return this._toolAddPoints(args);
+      case 'suggest_locations': return this._toolSuggestLocations(args);
       case 'plan_route': return this._toolPlanRoute(args);
       case 'filter_features': return this._toolFilter(args);
       case 'clear_filter': this._api.map.clearFeatureFilter && this._api.map.clearFeatureFilter(); this._applyPolygonFilter(null); return { ok: true };
+      case 'clear_route': this._clearRoute(); return { ok: true };
       case 'fit_to_layer': return this._toolFit(args);
       case 'set_map_view': return this._toolSetView(args);
       default: return { error: 'Unknown tool: ' + name };
@@ -477,6 +496,132 @@ const ScoutAssistantPlugin = {
     const bounds = new google.maps.LatLngBounds();
     features.forEach(f => bounds.extend({ lat: f.latitude, lng: f.longitude }));
     this._api.map.fitBounds(bounds);
+  },
+
+  // ── Data analysis ─────────────────────────────────────────────────────────────
+  _round(n) { return Math.round(n * 100) / 100; },
+
+  // Per-field stats over a set of features: numeric aggregates or category counts.
+  _analyzeFeatures(feats) {
+    const IGNORE = new Set(['id', 'importedAt', 'source', 'wkt', 'latitude', 'longitude', 'layerId', '_rowIndex']);
+    const stats = {};
+    feats.forEach(f => {
+      Object.entries(f).forEach(([k, v]) => {
+        if (IGNORE.has(k) || v === null || v === undefined || v === '') return;
+        const s = stats[k] || (stats[k] = { count: 0, numeric: 0, sum: 0, min: Infinity, max: -Infinity, values: new Map() });
+        s.count++;
+        const n = Utils.parseNumber(v);
+        if (!isNaN(n)) { s.numeric++; s.sum += n; if (n < s.min) s.min = n; if (n > s.max) s.max = n; }
+        const key = String(v);
+        s.values.set(key, (s.values.get(key) || 0) + 1);
+      });
+    });
+    const out = {};
+    Object.entries(stats).forEach(([k, s]) => {
+      if (s.count > 0 && s.numeric / s.count >= 0.8) {
+        out[k] = { type: 'numeric', count: s.count, min: this._round(s.min), max: this._round(s.max), sum: this._round(s.sum), avg: this._round(s.sum / s.numeric) };
+      } else {
+        const top = [...s.values.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([value, count]) => ({ value, count }));
+        out[k] = { type: 'categorical', count: s.count, unique: s.values.size, top };
+      }
+    });
+    return out;
+  },
+
+  _toolAnalyzeData(args) {
+    let layers = this._api.layers.getAll();
+    if (args.layer) {
+      const one = this._findLayer(args.layer);
+      if (!one) return { error: 'Layer not found: ' + args.layer };
+      layers = [one];
+    }
+    if (layers.length === 0) return { error: 'No layers to analyze. Import or add data first.' };
+
+    const perLayer = layers.map(l => ({
+      id: l.id, name: l.name, type: l.type, visible: l.visible,
+      features: (l.features || []).length,
+      fields: this._analyzeFeatures(l.features || [])
+    }));
+    const result = { layers: perLayer };
+    if (!args.layer && layers.length > 1) {
+      const all = [];
+      layers.forEach(l => (l.features || []).forEach(f => all.push(f)));
+      result.combined = { total_features: all.length, fields: this._analyzeFeatures(all) };
+    }
+    return result;
+  },
+
+  // ── Suggested locations (real, spread-out points derived from the data) ────────
+  _toolSuggestLocations(args) {
+    const count = Math.max(1, Math.min(parseInt(args.count, 10) || 10, 50));
+    let layers = this._api.layers.getAll().filter(l => l.visible && (l.type === 'point' || l.type === 'mixed'));
+    if (args.layer) { const one = this._findLayer(args.layer); if (one) layers = [one]; }
+
+    const pts = [];
+    layers.forEach(l => (l.features || []).forEach(f => {
+      const lat = parseFloat(f.latitude), lng = parseFloat(f.longitude);
+      if (!isNaN(lat) && !isNaN(lng)) pts.push({ lat, lng });
+    }));
+    if (pts.length < count) return { error: `Only ${pts.length} source point(s) available; need at least ${count}. Try a smaller count or add data.` };
+
+    const strategy = args.strategy === 'coverage' ? 'coverage' : 'density';
+    const centers = strategy === 'coverage' ? this._farthestPoints(pts, count) : this._kmeans(pts, count, 30);
+    const features = centers.map((c, i) => ({
+      id: Utils.generateId('feature'), name: `Location ${i + 1}`,
+      latitude: c.lat, longitude: c.lng, basis: strategy
+    }));
+    const layerName = args.layer_name || `Suggested Locations (${count})`;
+    const layer = this._api.layers.create(layerName, features, 'point', { source: 'scout-suggest', strategy });
+    this._fitFeatures(features);
+    this._api.ui.toast.success(`Scout suggested ${features.length} locations (${strategy})`);
+    return {
+      added: features.length, layer_id: layer.id, layer_name: layer.name, strategy,
+      points: features.map(f => ({ name: f.name, lat: this._round(f.latitude * 1000) / 1000, lng: this._round(f.longitude * 1000) / 1000 }))
+    };
+  },
+
+  _kmeans(points, k, iterations) {
+    const sorted = [...points].sort((a, b) => a.lng - b.lng);
+    const centroids = [];
+    for (let i = 0; i < k; i++) centroids.push({ ...sorted[Math.floor((i + 0.5) / k * sorted.length)] });
+    const assign = new Array(points.length).fill(0);
+    for (let it = 0; it < iterations; it++) {
+      let moved = false;
+      for (let i = 0; i < points.length; i++) {
+        let best = 0, bd = Infinity;
+        for (let c = 0; c < k; c++) {
+          const dl = points[i].lat - centroids[c].lat, dg = points[i].lng - centroids[c].lng;
+          const d = dl * dl + dg * dg;
+          if (d < bd) { bd = d; best = c; }
+        }
+        if (assign[i] !== best) { assign[i] = best; moved = true; }
+      }
+      const sums = Array.from({ length: k }, () => ({ lat: 0, lng: 0, n: 0 }));
+      points.forEach((p, i) => { const s = sums[assign[i]]; s.lat += p.lat; s.lng += p.lng; s.n++; });
+      for (let c = 0; c < k; c++) if (sums[c].n > 0) { centroids[c].lat = sums[c].lat / sums[c].n; centroids[c].lng = sums[c].lng / sums[c].n; }
+      if (!moved && it > 0) break;
+    }
+    return centroids.map(c => ({ lat: c.lat, lng: c.lng }));
+  },
+
+  // Greedy farthest-point sampling: picks existing points spread across the extent.
+  _farthestPoints(points, k) {
+    const chosen = [points[0]];
+    while (chosen.length < k) {
+      let best = null, bestD = -1;
+      for (const p of points) {
+        let dmin = Infinity;
+        for (const c of chosen) {
+          const dl = p.lat - c.lat, dg = p.lng - c.lng;
+          const d = dl * dl + dg * dg;
+          if (d < dmin) dmin = d;
+        }
+        if (dmin > bestD) { bestD = dmin; best = p; }
+      }
+      if (!best) break;
+      chosen.push(best);
+    }
+    return chosen.map(p => ({ lat: p.lat, lng: p.lng }));
   },
 
   // ── Routing (compact; road-following via Directions when available) ───────────
