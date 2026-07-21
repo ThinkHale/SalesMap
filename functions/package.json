@@ -3,11 +3,10 @@
   "description": "Cloud Functions for SalesMap (Scout AI proxy)",
   "private": true,
   "engines": {
-    "node": "20"
+    "node": "24"
   },
   "main": "index.js",
   "dependencies": {
-    "firebase-admin": "^12.6.0",
-    "firebase-functions": "^5.1.0"
+    "firebase-functions": "^6.0.0"
   }
 }
