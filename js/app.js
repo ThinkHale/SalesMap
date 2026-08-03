@@ -120,7 +120,7 @@ function setupEventBusSubscriptions() {
     'layer.created', 'layer.deleted', 'features.added',
     'feature.updated', 'feature.deleted', 'layer.renamed',
     'layer.grouped', 'layer.ungrouped', 'group.created', 'group.deleted',
-    'layer.color.changed'
+    'layer.color.changed', 'layer.style.changed', 'layer.infoFields.changed'
   ];
   saveEvents.forEach(e => eventBus.on(e, () => SyncController.scheduleSave()));
 }

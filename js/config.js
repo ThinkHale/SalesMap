@@ -97,7 +97,10 @@ const AppConfig = Object.freeze({
 
   featureInfo: Object.freeze({
     displayProperties: ['name','description','tier','bdm'],
-    systemProperties: ['layerid','wkt','id','latitude','longitude']
+    systemProperties: ['layerid','wkt','id','latitude','longitude'],
+    // Cap on auto-selected popup rows before a layer needs an explicit
+    // "Popup fields" list (Layer Settings) to stay readable.
+    maxPopupFields: 8
   }),
 
   layer: Object.freeze({

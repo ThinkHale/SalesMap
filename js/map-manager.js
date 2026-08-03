@@ -66,6 +66,46 @@ class MapManager {
   setOnFeatureClick(fn) { this.onFeatureClick = fn; }
   setOnDrawComplete(fn) { this.onDrawComplete = fn; }
 
+  // ─── Feature styling ──────────────────────────────────────────────────────
+
+  _layerObj(layerId) {
+    const lm = AppRegistry.has('layerManager') ? AppRegistry.get('layerManager') : null;
+    return lm ? lm.getLayer(layerId) : null;
+  }
+
+  // The single source of truth for "what color is this feature?": the layer's
+  // property style rule, else the layer color. Tier coloring is not special-cased
+  // here — layers with a tier column get a real tier style rule at creation
+  // (LayerManager._defaultTierStyle), so it shows in the legend and can be edited.
+  featureColor(layerId, feature, fallbackColor) {
+    const layer = this._layerObj(layerId);
+    const color = fallbackColor || layer?.color || this.layers.get(layerId)?.color || AppConfig.colors.default;
+    if (!feature) return color;
+    return PropertyService.resolveColor(layer?.styleRule, feature, color);
+  }
+
+  // Recolor every rendered object in a layer from its current style rule, then
+  // let the ClusterManager restyle its cluster pins to match.
+  applyLayerStyle(layerId) {
+    const layerData = this.layers.get(layerId);
+    if (!layerData) return;
+    const layer = this._layerObj(layerId);
+    const base = layer?.color || layerData.color;
+
+    layerData.markers.forEach(m => {
+      const icon = m.getIcon();
+      if (icon) m.setIcon({ ...icon, fillColor: this.featureColor(layerId, m._featureData, base) });
+    });
+    layerData.polygons.forEach(p => {
+      const color = this.featureColor(layerId, p._featureData, base);
+      p.setOptions({ fillColor: color, strokeColor: color });
+    });
+
+    if (AppRegistry.has('clusterManager')) {
+      AppRegistry.get('clusterManager').restyleLayer(layerId);
+    }
+  }
+
   // ─── Layer rendering ──────────────────────────────────────────────────────
 
   addFeaturesToLayer(layerId, features, type, existingColor) {
@@ -121,8 +161,7 @@ class MapManager {
       return;
     }
 
-    const tierColor = AppConfig.colors.tierMap[String(feature.tier).toLowerCase()] || null;
-    const fillColor = tierColor || color;
+    const fillColor = this.featureColor(layerId, feature, color);
 
     // When clustering is active, the ClusterManager controls marker visibility.
     // Create with map: null so the clusterer can place markers without a flash.
@@ -189,8 +228,7 @@ class MapManager {
     const pathData = this._geojsonToPaths(geoJson);
     if (!pathData) return;
 
-    const tierColor = AppConfig.colors.tierMap[String(feature.tier || '').toLowerCase()];
-    const fillColor = tierColor || color;
+    const fillColor = this.featureColor(layerId, feature, color);
 
     const polygonsToRender = pathData.type === 'MultiPolygon'
       ? pathData.polygons
@@ -260,18 +298,15 @@ class MapManager {
     title.textContent = feature.name || 'Untitled Feature';
     container.appendChild(title);
 
-    const displayProps = AppConfig.featureInfo.displayProperties;
-
-    displayProps.forEach(prop => {
-      if (feature[prop] !== undefined && feature[prop] !== null && feature[prop] !== '') {
-        const row = Utils.createElement('div', { className: 'iw-row' });
-        const lbl = Utils.createElement('span', { className: 'iw-label' }, prop + ':');
-        const val = Utils.createElement('span', { className: 'iw-value' });
-        val.textContent = feature[prop];
-        row.appendChild(lbl);
-        row.appendChild(val);
-        container.appendChild(row);
-      }
+    this.infoFieldsFor(layerId, feature).forEach(prop => {
+      if (PropertyService.isBlank(feature[prop])) return;
+      const row = Utils.createElement('div', { className: 'iw-row' });
+      const lbl = Utils.createElement('span', { className: 'iw-label' }, prop + ':');
+      const val = Utils.createElement('span', { className: 'iw-value' });
+      val.textContent = feature[prop];
+      row.appendChild(lbl);
+      row.appendChild(val);
+      container.appendChild(row);
     });
 
     const editBtn = Utils.createElement('button', { className: 'btn btn-sm btn-primary iw-edit-btn' }, 'View Details');
@@ -291,6 +326,35 @@ class MapManager {
       this.infoWindow.setPosition(bounds.getCenter());
       this.infoWindow.open(this.map);
     }
+  }
+
+  // Which properties a feature's popup lists. A layer can pin an explicit list
+  // (Layer Settings → Popup fields); otherwise fall back to the configured
+  // defaults plus any custom columns the spreadsheet brought along, so imported
+  // fields like "tenure" or "pay rate" show up without configuration.
+  infoFieldsFor(layerId, feature) {
+    const layer = this._layerObj(layerId);
+    if (Array.isArray(layer?.infoFields) && layer.infoFields.length > 0) {
+      return layer.infoFields;
+    }
+
+    const fields = [];
+    const seen = new Set(['name']);
+    const add = prop => {
+      if (!prop || seen.has(prop) || PropertyService.isSystemProperty(prop)) return;
+      // Skip fields this feature doesn't carry, so configured defaults can't use
+      // up the row budget with rows that would render empty anyway.
+      if (feature && !(prop in feature)) return;
+      seen.add(prop);
+      fields.push(prop);
+    };
+
+    // The property the layer is styled by is always worth showing.
+    if (PropertyService.isRule(layer?.styleRule)) add(layer.styleRule.property);
+    AppConfig.featureInfo.displayProperties.forEach(add);
+    Object.keys(feature || {}).forEach(add);
+
+    return fields.slice(0, AppConfig.featureInfo.maxPopupFields);
   }
 
   clearSelectedFeature() {
@@ -396,24 +460,6 @@ class MapManager {
       }
     });
     layerData.polygons.forEach(p => {
-      p.setOptions({ fillColor: color, strokeColor: color });
-    });
-  }
-
-  applyPropertyBasedStyle(layerId, property) {
-    const layerData = this.layers.get(layerId);
-    if (!layerData) return;
-
-    layerData.markers.forEach(m => {
-      const val = String(m._featureData[property] || '').toLowerCase();
-      const color = AppConfig.colors.tierMap[val] || layerData.color || AppConfig.colors.default;
-      const icon = m.getIcon();
-      if (icon) m.setIcon({ ...icon, fillColor: color });
-    });
-
-    layerData.polygons.forEach(p => {
-      const val = String(p._featureData[property] || '').toLowerCase();
-      const color = AppConfig.colors.tierMap[val] || layerData.color || AppConfig.colors.default;
       p.setOptions({ fillColor: color, strokeColor: color });
     });
   }

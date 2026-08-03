@@ -68,6 +68,9 @@ const MapShare = {
         pinScale: l.pinScale ?? 1.0,
         showOnHeatmap: !!l.showOnHeatmap,
         clusterEnabled: l.clusterEnabled !== false,
+        // Property styling + popup fields so the shared view matches the live map.
+        styleRule: l.styleRule || null,
+        infoFields: l.infoFields || null,
         features: (l.features || []).map(f => ({ ...f }))
       })),
       tierColors: AppConfig.colors.tierMap,

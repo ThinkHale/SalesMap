@@ -242,6 +242,13 @@ class PluginManager {
       if (perms.has('layers.read')) {
         api.layers.getAll = () => lm().getAllLayers();
         api.layers.get = layerId => lm().getLayer(layerId);
+        // Property discovery + smart grouping, for styling and analysis UIs.
+        api.layers.getProperties = layerId => lm().getLayerProperties(layerId);
+        api.layers.getStyleRule = layerId => lm().getLayer(layerId)?.styleRule || null;
+        api.layers.suggestBins = (layerId, property, opts) => {
+          const desc = PropertyService.describeProperty(lm().getLayer(layerId)?.features || [], property);
+          return desc ? PropertyService.suggestBins(desc.numbers, opts) : [];
+        };
       }
       if (perms.has('layers.write')) {
         api.layers.create = (name, features, type, meta) => lm().createLayer(name, features, type, meta);
@@ -251,21 +258,14 @@ class PluginManager {
         api.layers.deleteFeature = (layerId, fId) => lm().deleteFeature(layerId, fId);
         api.layers.setColor = (layerId, color) => lm().setLayerColor(layerId, color);
         api.layers.setOpacity = (layerId, opacity) => lm().setLayerOpacity(layerId, opacity);
-        api.layers.applyPropertyStyle = (layerId, property) => {
-          const mm = AppRegistry.require('mapManager');
-          mm.applyPropertyBasedStyle(layerId, property);
-          const layer = lm().getLayer(layerId);
-          if (layer) { layer.styleType = 'property'; layer.styleProperty = property; }
-          eventBus.emit('layer.style.changed', { layerId, styleType: 'property', property });
-        };
-        api.layers.resetStyle = (layerId) => {
-          const layer = lm().getLayer(layerId);
-          if (!layer) return;
-          layer.styleType = null;
-          layer.styleProperty = null;
-          lm().setLayerColor(layerId, layer.color);
-          eventBus.emit('layer.style.changed', { layerId, styleType: 'solid' });
-        };
+        // Property-based styling. `applyPropertyStyle` picks categories vs smart
+        // numeric ranges from the data; `setStyleRule` takes a fully-specified rule.
+        api.layers.applyPropertyStyle = (layerId, property, opts) => lm().autoStyleLayer(layerId, property, opts || {});
+        api.layers.setStyleRule = (layerId, rule) => lm().setLayerStyleRule(layerId, rule);
+        // Clearing the rule repaints every feature with the layer color, so there
+        // is no need to force colors separately.
+        api.layers.resetStyle = (layerId) => lm().clearLayerStyle(layerId);
+        api.layers.setInfoFields = (layerId, fields) => lm().setLayerInfoFields(layerId, fields);
       }
     }
 
@@ -285,6 +285,9 @@ class PluginManager {
         api.map.fitBounds = bounds => mm().map.fitBounds(bounds);
         api.map.addOverlay = overlay => overlay.setMap(mm().map);
         api.map.removeOverlay = overlay => overlay.setMap(null);
+        // Repaint a layer from its style rule — for plugins that temporarily
+        // override feature colors (e.g. choropleth shading) and need to restore.
+        api.map.applyLayerStyle = layerId => mm().applyLayerStyle(layerId);
         api.map.hideLayerMarkers = layerId => {
           const cm = AppRegistry.get('clusterManager');
           if (cm) cm.hideLayerForHeatmap(layerId);

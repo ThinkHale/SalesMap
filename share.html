@@ -19,6 +19,7 @@
   .legend { background: white; border-radius: 8px; padding: 12px; margin: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 220px; max-height: 40vh; overflow-y: auto; }
   .legend-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #333; }
   .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; color: #555; }
+  .legend-sub-item { padding-left: 8px; font-size: 11px; color: #666; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
   .iw-row { font-size: 12px; margin-bottom: 3px; }
@@ -45,6 +46,8 @@
 <script src="https://unpkg.com/@googlemaps/markerclusterer@2.5.3/dist/index.min.js"></script>
 <!-- AppConfig provides the same map/marker/tier/firebase constants as the live app -->
 <script src="js/config.js"></script>
+<!-- PropertyService resolves property-based colors exactly as the live app does -->
+<script src="js/property-service.js"></script>
 <script>
 (function () {
   'use strict';
@@ -83,9 +86,15 @@
   var PIN_PATH = '';
   var GLOBAL_PIN_SCALE = 1.0;
 
-  function tierColorFor(feature, fallback) {
+  // Mirrors MapManager.featureColor: a property style rule wins, then tier, then
+  // the layer color.
+  function featureColorFor(feature, layer) {
+    var fallback = layer.color || '#0078d4';
+    if (PropertyService.isRule(layer.styleRule)) {
+      return PropertyService.resolveColor(layer.styleRule, feature, fallback);
+    }
     var key = String(feature.tier == null ? '' : feature.tier).toLowerCase();
-    return TIER_COLORS[key] || fallback || '#0078d4';
+    return TIER_COLORS[key] || fallback;
   }
 
   function makeMarkerIcon(color, layerPinScale) {
@@ -100,13 +109,29 @@
     };
   }
 
-  function infoWindowContent(feature) {
+  // Mirrors MapManager.infoFieldsFor so shared popups surface the same custom
+  // spreadsheet columns as the live app.
+  function popupFields(layer, feature) {
+    if (layer.infoFields && layer.infoFields.length) return layer.infoFields;
+    var fields = [], seen = { name: true };
+    function add(key) {
+      if (!key || seen[key] || PropertyService.isSystemProperty(key)) return;
+      seen[key] = true;
+      fields.push(key);
+    }
+    if (PropertyService.isRule(layer.styleRule)) add(layer.styleRule.property);
+    AppConfig.featureInfo.displayProperties.forEach(add);
+    Object.keys(feature).forEach(add);
+    return fields.slice(0, AppConfig.featureInfo.maxPopupFields);
+  }
+
+  function infoWindowContent(feature, layer) {
     var wrap = document.createElement('div');
     var title = document.createElement('div');
     title.className = 'iw-title';
     title.textContent = feature.name || 'Untitled Feature';
     wrap.appendChild(title);
-    ['description', 'tier', 'bdm', 'revenue'].forEach(function (prop) {
+    popupFields(layer, feature).forEach(function (prop) {
       var v = feature[prop];
       if (v === undefined || v === null || v === '') return;
       var row = document.createElement('div');
@@ -142,12 +167,22 @@
   function formatCount(count) {
     return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
   }
-  function buildClusterRenderer() {
+  // Cluster color follows the layer's style rule aggregated over its own markers,
+  // mirroring ClusterManager._clusterStyleFor. Size still comes from the count.
+  function clusterStyleFor(layer, count, markers) {
+    var byCount = clusterStyle(count);
+    var rule = layer.styleRule;
+    if (!PropertyService.isRule(rule) || rule.applyToClusters === false || !markers || !markers.length) return byCount;
+    var feats = markers.map(function (m) { return m._feature; }).filter(Boolean);
+    var agg = PropertyService.aggregate(rule, feats, layer.color || '#0078d4');
+    return { color: (agg && agg.color) || byCount.color, size: byCount.size };
+  }
+  function buildClusterRenderer(layer) {
     return {
       render: function (cluster) {
         var count = cluster.count;
         var position = cluster.position;
-        var st = clusterStyle(count);
+        var st = clusterStyleFor(layer, count, cluster.markers);
         var light = lightenColor(st.color, 20);
         var label = formatCount(count);
         var fontSize = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
@@ -319,16 +354,34 @@
     legend.appendChild(lt);
     (snapshot.layers || []).forEach(function (layer) {
       if (!layer.visible) return;
+      var styled = PropertyService.isRule(layer.styleRule);
+
       var item = document.createElement('div');
       item.className = 'legend-item';
       var dot = document.createElement('div');
       dot.className = 'legend-dot';
       dot.style.background = layer.color || '#0078d4';
       var name = document.createElement('span');
-      name.textContent = layer.name;
-      item.appendChild(dot);
+      name.textContent = styled ? layer.name + ' — ' + layer.styleRule.property : layer.name;
+      if (!styled) item.appendChild(dot);
       item.appendChild(name);
       legend.appendChild(item);
+
+      // Styled layers list their groups so map colors stay decodable.
+      if (!styled) return;
+      PropertyService.legendItems(layer.styleRule, layer.features || []).forEach(function (entry) {
+        if (entry.count === 0) return;
+        var row = document.createElement('div');
+        row.className = 'legend-item legend-sub-item';
+        var swatch = document.createElement('div');
+        swatch.className = 'legend-dot';
+        swatch.style.background = entry.color;
+        var label = document.createElement('span');
+        label.textContent = entry.label + (entry.count != null ? ' (' + entry.count + ')' : '');
+        row.appendChild(swatch);
+        row.appendChild(label);
+        legend.appendChild(row);
+      });
     });
     map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(legend);
 
@@ -337,8 +390,8 @@
     var persistent = [];     // showOnHeatmap groups — stay visible over the heat canvas
     var heatPoints = [];
 
-    function openInfo(feature, target, position) {
-      infoWindow.setContent(infoWindowContent(feature));
+    function openInfo(feature, layer, target, position) {
+      infoWindow.setContent(infoWindowContent(feature, layer));
       if (position) { infoWindow.setPosition(position); infoWindow.open(map); }
       else { infoWindow.open(map, target); }
     }
@@ -359,13 +412,15 @@
 
         heatPoints.push(new google.maps.LatLng(lat, lng));
 
-        var color = tierColorFor(feature, layer.color);
+        var color = featureColorFor(feature, layer);
         var marker = new google.maps.Marker({
           position: { lat: lat, lng: lng },
           title: feature.name || '',
           icon: makeMarkerIcon(color, layerScale)
         });
-        marker.addListener('click', function () { openInfo(feature, marker); });
+        // Clusters need their members' data to compute an aggregate color.
+        marker._feature = feature;
+        marker.addListener('click', function () { openInfo(feature, layer, marker); });
         markers.push(marker);
       });
 
@@ -379,7 +434,7 @@
         group = new markerClusterer.MarkerClusterer({
           map: map,
           markers: markers,
-          renderer: buildClusterRenderer(),
+          renderer: buildClusterRenderer(layer),
           algorithm: algorithm
         });
         (layer.showOnHeatmap ? persistent : heatHideable).push({ type: 'cluster', obj: group, list: markers });
@@ -396,7 +451,7 @@
       var rings = parsed.type === 'MultiPolygon'
         ? parsed.coordinates
         : [parsed.coordinates];
-      var fillColor = tierColorFor(feature, layer.color);
+      var fillColor = featureColorFor(feature, layer);
       rings.forEach(function (polyCoords) {
         var paths = polyCoords.map(function (ring) {
           return ring.map(function (c) { return { lat: c[1], lng: c[0] }; });
@@ -410,7 +465,7 @@
           strokeOpacity: 0.8,
           map: map
         });
-        polygon.addListener('click', function (e) { openInfo(feature, null, e.latLng); });
+        polygon.addListener('click', function (e) { openInfo(feature, layer, null, e.latLng); });
       });
     }
 

@@ -4,10 +4,12 @@ SalesMap is a browser-based sales territory mapping application built with Googl
 
 ## Features
 
-- Import CSV / Excel data as map layers
+- Import CSV / Excel data as map layers, keeping any custom columns as feature properties
 - Geocode address-based datasets
 - Draw points and polygons directly on the map
 - Layer visibility, color, opacity, and grouping controls
+- Style pins, clusters, and polygons by any property — one color per category, or automatic
+  "smart" numeric ranges (0–100K, 100K–250K, …) with an on-map legend
 - Built-in analytics panel for revenue, tier, and account insights
 - Real-time workspace sync via Firebase
 - Export view-only HTML map files
@@ -53,6 +55,10 @@ The Google Maps message shown on `127.0.0.1` or an unapproved VS Code preview or
 - `AppRegistry` manages shared services and singletons.
 - `MapManager` handles map rendering, feature display, drawing, and tool interactions.
 - `LayerManager` manages layer state, feature CRUD, groups, and persistence.
+- `PropertyService` (`js/property-service.js`) is dependency-free and shared by the app, the
+  share page, and the inlined export: property discovery, numeric range grouping, and the
+  style rules that map a property value to a color. A layer's styling lives in
+  `layer.styleRule`; `MapManager.featureColor()` is the only place a feature's color is decided.
 - Controllers handle import, sync, profile, drawing, and UI rendering.
 
 ## Notes

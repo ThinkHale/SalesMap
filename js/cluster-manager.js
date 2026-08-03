@@ -112,7 +112,7 @@ class ClusterManager {
         const clusterer = new MC({
           map: this._map,
           markers: [],
-          renderer: this._buildRenderer(),
+          renderer: this._buildRenderer(layerId),
           algorithm,
           onClusterClick: (event, cluster) => this._handleClusterClick(event, cluster)
         });
@@ -276,6 +276,20 @@ class ClusterManager {
     }
   }
 
+  // Rebuild a layer's cluster pins after its style rule changed. The marker icons
+  // themselves are already repainted by MapManager; the cached cluster glyphs only
+  // refresh on a rebuild.
+  restyleLayer(layerId) {
+    if (!this._layerClusters(layerId)) return;
+    const layerData = this._mapManager?.getLayerData(layerId);
+    if (layerData && layerData.visible === false) return;
+    const markers = this._markers.get(layerId) || [];
+    if (markers.length === 0) return;
+    // Detach first, mirroring the other rebuild paths, so no stale glyph survives.
+    markers.forEach(m => m.setMap(null));
+    this._rebuildClusterer(layerId, markers);
+  }
+
   // Heatmap-specific: visually hide/show without changing logical layer state.
   hideLayerForHeatmap(layerId) {
     const clusterer = this._clusterers.get(layerId);
@@ -394,11 +408,28 @@ class ClusterManager {
     return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
   }
 
+  // A cluster's color: when its layer is styled by a property, the cluster shows
+  // the aggregate of its own markers (average of a measure, majority of a
+  // category) so zoomed-out clusters read the same story as the pins inside them.
+  // Size always comes from the marker count.
+  _clusterStyleFor(layerId, count, markers) {
+    const byCount = this._getClusterStyle(count);
+    const layer = AppRegistry.has('layerManager')
+      ? AppRegistry.get('layerManager').getLayer(layerId) : null;
+    const rule = layer?.styleRule;
+    if (!PropertyService.isRule(rule) || rule.applyToClusters === false || !markers || markers.length === 0) {
+      return byCount;
+    }
+    const features = markers.map(m => m._featureData).filter(Boolean);
+    const { color } = PropertyService.aggregate(rule, features, layer.color);
+    return { color: color || byCount.color, size: byCount.size };
+  }
+
   // Cluster pins reuse the single-marker teardrop shape (AppConfig.marker.pinPath)
   // scaled up, with the count rendered inside the pin head — so a lone marker and
   // a cluster read as the same visual family.
-  _buildClusterPinSvg(count) {
-    const { color, size } = this._getClusterStyle(count);
+  _buildClusterPinSvg(count, style) {
+    const { color, size } = style || this._getClusterStyle(count);
     const light = this._lightenColor(color, 20);
     const label = this._formatCount(count);
     const fontSize = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
@@ -421,10 +452,11 @@ class ClusterManager {
     return { svg, w, h };
   }
 
-  _buildRenderer() {
+  _buildRenderer(layerId) {
     return {
-      render: ({ count, position }) => {
-        const { svg, w, h } = this._buildClusterPinSvg(count);
+      render: ({ count, position, markers }) => {
+        const style = this._clusterStyleFor(layerId, count, markers);
+        const { svg, w, h } = this._buildClusterPinSvg(count, style);
         return new google.maps.Marker({
           position,
           icon: {

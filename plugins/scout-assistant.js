@@ -319,6 +319,7 @@ const ScoutAssistantPlugin = {
       "You help users understand the app and you TAKE ACTIONS on their behalf by calling the provided tools.",
       "Prefer acting over explaining when the user asks you to do something. After acting, briefly confirm what you did.",
       "A core strength: you can deeply analyze the user's data. Call analyze_data to inspect real property values — numeric aggregates (sum/avg/min/max) and category breakdowns — for a single layer or for all layers together. Do this before answering data questions or making recommendations, rather than guessing. The layer list below only has field names, not values.",
+      "You can also style the map by data: style_layer colors pins, cluster pins, and polygons by ANY property, including custom columns from the user's spreadsheet. For numbers, prefer mode 'range' — call suggest_groups first when the user cares about the boundaries (or you want to confirm they make sense), then style_layer. For text/low-cardinality fields use mode 'categorical'. Use list_properties when you're unsure what a layer carries, and set_popup_fields to surface a custom column in the click popup.",
       "When a tool needs a layer, pass its id or exact name. Ask a short clarifying question only if genuinely ambiguous.",
       "The app can import CSV/Excel, draw points/polygons, cluster markers, and has plugins for filtering, choropleth shading, territory building, route optimizing, radius coverage, area measurement, and GeoJSON/KML export. Guide users to these when relevant.",
       "Keep replies short (1-3 sentences) unless asked for detail.",
@@ -368,6 +369,31 @@ const ScoutAssistantPlugin = {
         layer: { type: 'string', description: 'Optional source layer id/name; defaults to all visible point layers.' },
         layer_name: { type: 'string' }
       }, required: ['count'] } } },
+      { type: 'function', function: { name: 'list_properties', description: 'List the properties available on a layer\'s features (including custom spreadsheet columns), with type, coverage, unique-value counts, and numeric min/max. Use before styling to pick a property.', parameters: { type: 'object', properties: {
+        layer: { type: 'string', description: 'Layer id or name.' }
+      }, required: ['layer'] } } },
+      { type: 'function', function: { name: 'suggest_groups', description: 'Compute sensible numeric ranges (groups) for a property on a layer — e.g. square footage into 0–100K, 100K–250K … — without changing the map. Returns each range with its label and how many features fall in it. Use this to propose or sanity-check groupings before calling style_layer.', parameters: { type: 'object', properties: {
+        layer: { type: 'string', description: 'Layer id or name.' },
+        property: { type: 'string', description: 'Numeric property to group.' },
+        count: { type: 'number', description: 'How many groups (2–9, default 5).' },
+        method: { type: 'string', enum: ['smart', 'equal', 'quantile'], description: 'smart = readable rounded boundaries (default); equal = equal width; quantile = equal feature counts.' }
+      }, required: ['layer', 'property'] } } },
+      { type: 'function', function: { name: 'style_layer', description: 'Color a layer\'s pins, cluster pins, and polygons by any property. mode "range" groups a numeric property into ranges (boundaries chosen automatically, or pass explicit breaks); mode "categorical" gives each distinct value its own color; mode "solid" reverts to a single layer color. Applies immediately and adds a map legend.', parameters: { type: 'object', properties: {
+        layer: { type: 'string', description: 'Layer id or name.' },
+        mode: { type: 'string', enum: ['range', 'categorical', 'solid'], description: 'Omit to let the data decide between range and categorical.' },
+        property: { type: 'string', description: 'Property to style by (required unless mode is "solid").' },
+        count: { type: 'number', description: 'Range mode: how many groups (2–9, default 5).' },
+        method: { type: 'string', enum: ['smart', 'equal', 'quantile'], description: 'Range mode grouping method (default smart).' },
+        breaks: { type: 'array', items: { type: 'number' }, description: 'Range mode: explicit boundaries, e.g. [0, 100000, 250000, 500000]. Overrides count/method.' },
+        palette: { type: 'string', description: 'Range mode ramp: blue, green, red, orange, purple, teal, viridis, warmcool.' },
+        max_values: { type: 'number', description: 'Categorical mode: how many distinct values get their own color before the rest become "Other".' },
+        apply_to_clusters: { type: 'boolean', description: 'Whether cluster pins take the aggregated color too (default true).' },
+        cluster_stat: { type: 'string', enum: ['avg', 'max', 'sum'], description: 'Range mode: how a cluster reduces its pins to one value (default avg).' }
+      }, required: ['layer'] } } },
+      { type: 'function', function: { name: 'set_popup_fields', description: 'Choose which properties show in a layer\'s map popup when a feature is clicked — use to surface custom spreadsheet columns. Pass an empty list to go back to automatic.', parameters: { type: 'object', properties: {
+        layer: { type: 'string' },
+        fields: { type: 'array', items: { type: 'string' }, description: 'Property names in display order.' }
+      }, required: ['layer', 'fields'] } } },
       { type: 'function', function: { name: 'clear_filter', description: 'Clear any active feature filter.', parameters: { type: 'object', properties: {} } } },
       { type: 'function', function: { name: 'clear_route', description: 'Remove the route line and numbered stop markers Scout drew on the map.', parameters: { type: 'object', properties: {} } } },
       { type: 'function', function: { name: 'fit_to_layer', description: 'Zoom/pan the map to fit a layer.', parameters: { type: 'object', properties: { layer: { type: 'string' } }, required: ['layer'] } } },
@@ -387,6 +413,10 @@ const ScoutAssistantPlugin = {
       case 'geocode_add_point': return this._toolGeocodeAdd(args);
       case 'add_points': return this._toolAddPoints(args);
       case 'suggest_locations': return this._toolSuggestLocations(args);
+      case 'list_properties': return this._toolListProperties(args);
+      case 'suggest_groups': return this._toolSuggestGroups(args);
+      case 'style_layer': return this._toolStyleLayer(args);
+      case 'set_popup_fields': return this._toolSetPopupFields(args);
       case 'plan_route': return this._toolPlanRoute(args);
       case 'filter_features': return this._toolFilter(args);
       case 'clear_filter': this._api.map.clearFeatureFilter && this._api.map.clearFeatureFilter(); this._applyPolygonFilter(null); return { ok: true };
@@ -549,6 +579,111 @@ const ScoutAssistantPlugin = {
       result.combined = { total_features: all.length, fields: this._analyzeFeatures(all) };
     }
     return result;
+  },
+
+  // ── Property styling ──────────────────────────────────────────────────────────
+  _toolListProperties(args) {
+    const layer = this._findLayer(args.layer);
+    if (!layer) return { error: 'Layer not found: ' + args.layer };
+    const props = this._api.layers.getProperties(layer.id);
+    if (props.length === 0) return { layer: layer.name, properties: [], message: 'This layer has no styleable properties.' };
+    return {
+      layer_id: layer.id, layer_name: layer.name, features: (layer.features || []).length,
+      properties: props.map(p => ({
+        name: p.name,
+        type: p.type,
+        suggested_mode: p.suggestedMode,
+        present_on: p.count,
+        coverage: this._round(p.coverage * 100) + '%',
+        unique_values: p.unique,
+        min: p.min,
+        max: p.max,
+        sample_values: p.values.slice(0, 6).map(([value, count]) => ({ value, count }))
+      }))
+    };
+  },
+
+  _toolSuggestGroups(args) {
+    const layer = this._findLayer(args.layer);
+    if (!layer) return { error: 'Layer not found: ' + args.layer };
+    const desc = PropertyService.describeProperty(layer.features || [], args.property);
+    if (!desc) return { error: `Property "${args.property}" not found on layer "${layer.name}"` };
+    if (!desc.numbers.length) {
+      return { error: `Property "${args.property}" has no numeric values — use categorical styling instead.` };
+    }
+
+    const method = args.method || 'smart';
+    const bins = PropertyService.suggestBins(desc.numbers, { count: args.count, method });
+    const counts = PropertyService._binStats(bins, [...desc.numbers].sort((a, b) => a - b)).counts;
+    return {
+      layer_name: layer.name,
+      property: desc.name,
+      method,
+      min: desc.min,
+      max: desc.max,
+      groups: bins.map((bin, i) => ({ label: bin.label, min: bin.min, max: bin.max, features: counts[i] })),
+      note: 'Pass these boundaries to style_layer as `breaks` to apply exactly these groups, or call style_layer with the same count/method.'
+    };
+  },
+
+  _toolStyleLayer(args) {
+    const layer = this._findLayer(args.layer);
+    if (!layer) return { error: 'Layer not found: ' + args.layer };
+
+    if (args.mode === 'solid') {
+      this._api.layers.resetStyle(layer.id);
+      this._api.ui.toast.success(`Scout reset "${layer.name}" to a solid color`);
+      return { ok: true, layer_name: layer.name, mode: 'solid' };
+    }
+
+    if (!args.property) return { error: 'Provide a property to style by (or mode "solid").' };
+    const desc = PropertyService.describeProperty(layer.features || [], args.property);
+    if (!desc) return { error: `Property "${args.property}" not found on layer "${layer.name}"` };
+
+    const mode = args.mode || desc.suggestedMode;
+    if (mode === 'range' && !desc.numbers.length) {
+      return { error: `Property "${args.property}" has no numeric values, so it can't be grouped into ranges. Use mode "categorical".` };
+    }
+
+    const rule = this._api.layers.applyPropertyStyle(layer.id, desc.name, {
+      mode,
+      count: args.count,
+      method: args.method,
+      breaks: Array.isArray(args.breaks) ? args.breaks : undefined,
+      palette: args.palette,
+      maxValues: args.max_values,
+      applyToClusters: args.apply_to_clusters !== false,
+      clusterStat: args.cluster_stat
+    });
+    if (!rule) return { error: 'Could not build a style for that property.' };
+
+    const legend = PropertyService.legendItems(rule, layer.features || []);
+    this._api.ui.toast.success(`Scout styled "${layer.name}" by ${desc.name}`);
+    return {
+      ok: true,
+      layer_id: layer.id,
+      layer_name: layer.name,
+      mode: rule.mode,
+      property: rule.property,
+      method: rule.method,
+      applied_to_clusters: rule.applyToClusters !== false,
+      groups: legend.map(item => ({ label: item.label, color: item.color, features: item.count }))
+    };
+  },
+
+  _toolSetPopupFields(args) {
+    const layer = this._findLayer(args.layer);
+    if (!layer) return { error: 'Layer not found: ' + args.layer };
+    const available = this._api.layers.getProperties(layer.id).map(p => p.name);
+    const requested = Array.isArray(args.fields) ? args.fields : [];
+    const unknown = requested.filter(f => !available.includes(f));
+    if (unknown.length) return { error: `Not on this layer: ${unknown.join(', ')}. Available: ${available.join(', ')}` };
+
+    this._api.layers.setInfoFields(layer.id, requested);
+    return {
+      ok: true, layer_name: layer.name,
+      fields: requested.length ? requested : 'automatic'
+    };
   },
 
   // ── Suggested locations (real, spread-out points derived from the data) ────────

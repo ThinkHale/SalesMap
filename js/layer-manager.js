@@ -24,8 +24,13 @@ class LayerManager {
       opacity: options.opacity !== undefined ? options.opacity : AppConfig.layer.defaultOpacity,
       color,
       groupId: null,
-      styleType: options.styleType || null,
-      styleProperty: options.styleProperty || null,
+      // Property-driven styling: a PropertyService rule ({ mode, property, bins |
+      // entries, … }), or a solid rule for a single layer color. An explicit
+      // `styleRule` option always wins — including a solid one, so undo restores a
+      // deliberate "Solid" choice instead of re-deriving the tier default.
+      styleRule: this._normalizeStyleRule(options.styleRule, features),
+      // Explicit popup field list, or null to auto-pick (see MapManager.infoFieldsFor).
+      infoFields: options.infoFields || null,
       showLabels: options.showLabels || false,
       pinScale: options.pinScale !== undefined ? options.pinScale : 1.0,
       showOnHeatmap: options.showOnHeatmap || false,
@@ -81,8 +86,10 @@ class LayerManager {
 
     const type = featureType || layer.type;
     this._mapManager.addFeaturesToLayer(layerId, newFeatures, type, layer.color);
-    if (layer.styleType === 'property' && layer.styleProperty) {
-      this._mapManager.applyPropertyBasedStyle(layerId, layer.styleProperty);
+    // New features are drawn with the rule already applied, but cluster pins
+    // aggregate over the whole layer and must be recomputed.
+    if (PropertyService.isRule(layer.styleRule)) {
+      this._mapManager.applyLayerStyle(layerId);
     }
 
     eventBus.emit('features.added', {
@@ -212,9 +219,70 @@ class LayerManager {
     if (!layer.visible) {
       this._mapManager.toggleLayerVisibility(layer.id, false);
     }
-    if (layer.styleType === 'property' && layer.styleProperty) {
-      this._mapManager.applyPropertyBasedStyle(layer.id, layer.styleProperty);
+    if (PropertyService.isRule(layer.styleRule)) {
+      this._mapManager.applyLayerStyle(layer.id);
     }
+  }
+
+  // ─── Property-based styling ────────────────────────────────────────────────
+
+  _normalizeStyleRule(rule, features) {
+    if (rule === undefined) return this._defaultTierStyle(features || []);
+    return PropertyService.isRule(rule) ? rule : PropertyService.solidRule();
+  }
+
+  // Tier columns have always been auto-colored with the tier palette. Expressing
+  // that as a real style rule (instead of a render-time special case) keeps the
+  // familiar look while making it legible in the legend and editable like any
+  // other property style.
+  _defaultTierStyle(features) {
+    const hasTier = features.some(f => f && !PropertyService.isBlank(f.tier));
+    if (!hasTier) return PropertyService.solidRule();
+    return PropertyService.autoRule(features, 'tier', { mode: 'categorical' })
+      || PropertyService.solidRule();
+  }
+
+  // Install a PropertyService rule (or a falsy value to go back to a solid layer
+  // color) and repaint pins, polygons, and cluster pins.
+  setLayerStyleRule(layerId, rule) {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    const applied = PropertyService.isRule(rule) ? rule : PropertyService.solidRule();
+    layer.styleRule = applied;
+    this._mapManager.applyLayerStyle(layerId);
+    eventBus.emit('layer.style.changed', {
+      layerId,
+      styleRule: applied,
+      styleType: applied.mode
+    });
+    // null signals "not styled by a property", so callers can detect a no-op.
+    return PropertyService.isRule(applied) ? applied : null;
+  }
+
+  // Build a rule for `property` straight from the layer's own data — the app-side
+  // entry point for "color by this column", including smart numeric grouping.
+  autoStyleLayer(layerId, property, opts = {}) {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    const rule = PropertyService.autoRule(layer.features || [], property, opts);
+    if (!rule) return null;
+    return this.setLayerStyleRule(layerId, rule);
+  }
+
+  clearLayerStyle(layerId) {
+    return this.setLayerStyleRule(layerId, null);
+  }
+
+  getLayerProperties(layerId) {
+    const layer = this.layers.get(layerId);
+    return layer ? PropertyService.collectProperties(layer.features || []) : [];
+  }
+
+  setLayerInfoFields(layerId, fields) {
+    const layer = this.layers.get(layerId);
+    if (!layer) return;
+    layer.infoFields = (Array.isArray(fields) && fields.length > 0) ? [...fields] : null;
+    eventBus.emit('layer.infoFields.changed', { layerId, infoFields: layer.infoFields });
   }
 
   getFeature(layerId, featureId) {
@@ -337,6 +405,7 @@ class LayerManager {
     order.forEach(id => {
       if (!layers[id]) return;
       const layer = { ...layers[id], features: layers[id].features || [] };
+      this._migrateLegacyStyle(layer);
       newLayers.set(id, layer);
     });
 
@@ -362,8 +431,8 @@ class LayerManager {
 
     // Restore layer styling state after import
     newLayers.forEach((layer, id) => {
-      if (layer.styleType === 'property' && layer.styleProperty) {
-        this._mapManager.applyPropertyBasedStyle(id, layer.styleProperty);
+      if (PropertyService.isRule(layer.styleRule)) {
+        this._mapManager.applyLayerStyle(id);
       }
       if (layer.showLabels) {
         this._mapManager.togglePolygonLabels(id, true, layer.features);
@@ -371,6 +440,23 @@ class LayerManager {
     });
 
     eventBus.emit('layers.imported', { layerCount: newLayers.size });
+  }
+
+  // Workspaces saved before property style rules either stored
+  // { styleType: 'property', styleProperty } or relied on tier being auto-colored
+  // at render time. Both are now expressed as style rules, so rebuild the
+  // equivalent rule to keep those layers looking the way they were saved.
+  _migrateLegacyStyle(layer) {
+    if (layer.styleRule) return;
+
+    if (layer.styleType === 'property' && layer.styleProperty) {
+      layer.styleRule = PropertyService.autoRule(layer.features, layer.styleProperty, { mode: 'categorical' })
+        || PropertyService.solidRule();
+    } else {
+      layer.styleRule = this._defaultTierStyle(layer.features);
+    }
+    delete layer.styleType;
+    delete layer.styleProperty;
   }
 
   moveLayer(layerId, beforeLayerId) {

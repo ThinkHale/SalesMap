@@ -49,9 +49,12 @@ class DeleteLayerCommand {
         color: this._snapshot.color,
         visible: this._snapshot.visible,
         opacity: this._snapshot.opacity,
-        styleType: this._snapshot.styleType,
-        styleProperty: this._snapshot.styleProperty,
+        styleRule: this._snapshot.styleRule,
+        infoFields: this._snapshot.infoFields,
         showLabels: this._snapshot.showLabels,
+        pinScale: this._snapshot.pinScale,
+        clusterEnabled: this._snapshot.clusterEnabled,
+        showOnHeatmap: this._snapshot.showOnHeatmap,
         groupId: this._groupId,
         createdAt: this._snapshot.createdAt
       }
@@ -63,8 +66,8 @@ class DeleteLayerCommand {
     if (this._snapshot.opacity !== undefined && this._snapshot.opacity !== null) {
       this.layerManager.setLayerOpacity(layer.id, this._snapshot.opacity);
     }
-    if (this._snapshot.styleType === 'property' && this._snapshot.styleProperty) {
-      this.layerManager._mapManager.applyPropertyBasedStyle(layer.id, this._snapshot.styleProperty);
+    if (PropertyService.isRule(this._snapshot.styleRule)) {
+      this.layerManager._mapManager.applyLayerStyle(layer.id);
     }
     if (this._snapshot.showLabels) {
       this.layerManager._mapManager.togglePolygonLabels(layer.id, true, layer.features);

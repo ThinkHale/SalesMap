@@ -438,6 +438,10 @@ const UIRenderer = {
       clusGroup.appendChild(clusToggle);
       wrap.appendChild(clusGroup);
 
+      // Popup fields — which properties (including custom spreadsheet columns)
+      // appear when a feature is clicked.
+      wrap.appendChild(this._buildPopupFieldsControl(layer, layerManager));
+
       const note = Utils.createElement('div', { className: 'plugin-desc' },
         'These overrides apply on top of the global Marker Clustering settings and are saved with your workspace.');
       note.style.marginTop = '10px';
@@ -446,6 +450,59 @@ const UIRenderer = {
       body.appendChild(wrap);
     }, `${layer.name} — Settings`);
     AppRegistry.require('syncController')?.scheduleSave?.();
+  },
+
+  // Checkbox list of every property on the layer's features, controlling what the
+  // map popup shows. Leaving them all checked-by-default would hide the fact that
+  // the popup auto-picks, so the automatic mode is an explicit state here.
+  _buildPopupFieldsControl(layer, layerManager) {
+    const group = Utils.createElement('div', { className: 'form-group' });
+    group.appendChild(Utils.createElement('label', { className: 'form-label' }, 'Popup fields'));
+
+    const properties = layerManager.getLayerProperties(layer.id);
+    if (properties.length === 0) {
+      group.appendChild(Utils.createElement('div', { className: 'no-data-msg' }, 'No properties on this layer yet.'));
+      return group;
+    }
+
+    const isAuto = !Array.isArray(layer.infoFields) || layer.infoFields.length === 0;
+    const hint = Utils.createElement('div', { className: 'import-section-hint' },
+      isAuto
+        ? 'Automatic — showing the standard fields plus any imported columns.'
+        : `Showing ${layer.infoFields.length} selected field(s).`);
+    group.appendChild(hint);
+
+    const mm = AppRegistry.require('mapManager');
+    const autoFields = new Set(mm.infoFieldsFor(layer.id, layer.features?.[0] || {}));
+    const list = Utils.createElement('div', { className: 'import-custom-fields' });
+
+    properties.forEach(prop => {
+      const row = Utils.createElement('label', { className: 'import-custom-field' });
+      const cb = Utils.createElement('input', { type: 'checkbox', 'data-prop': prop.name });
+      cb.checked = isAuto ? autoFields.has(prop.name) : layer.infoFields.includes(prop.name);
+      cb.addEventListener('change', () => {
+        const selected = [...list.querySelectorAll('input[data-prop]:checked')]
+          .map(el => el.getAttribute('data-prop'));
+        layerManager.setLayerInfoFields(layer.id, selected);
+        hint.textContent = selected.length > 0
+          ? `Showing ${selected.length} selected field(s).`
+          : 'Automatic — showing the standard fields plus any imported columns.';
+      });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(' ' + prop.name));
+      list.appendChild(row);
+    });
+    group.appendChild(list);
+
+    const resetBtn = Utils.createElement('button', { className: 'btn btn-secondary btn-sm' }, 'Use automatic fields');
+    resetBtn.style.marginTop = '6px';
+    resetBtn.addEventListener('click', () => {
+      layerManager.setLayerInfoFields(layer.id, null);
+      this._showLayerSettings(layerManager.getLayer(layer.id), layerManager);
+    });
+    group.appendChild(resetBtn);
+
+    return group;
   },
 
   _promptRenameLayer(layer, layerManager) {
@@ -574,22 +631,30 @@ const UIRenderer = {
       form.appendChild(group);
     });
 
-    // Read-only properties
-    const systemProps = new Set(AppConfig.featureInfo.systemProperties.concat(['name','description','tier','bdm','revenue']));
-    const extraProps = Object.keys(feature).filter(k => !systemProps.has(k) && !k.startsWith('_'));
-    if (extraProps.length > 0) {
+    // Custom properties — every column the import brought along that isn't one of
+    // the standard fields above. Editable, so a "tenure" or "pay rate" value can be
+    // corrected in place and picked up by styling and filters.
+    const standardFields = new Set(editableFields);
+    const customProps = Object.keys(feature)
+      .filter(k => !standardFields.has(k) && !PropertyService.isSystemProperty(k));
+
+    if (customProps.length > 0) {
       const extraSection = Utils.createElement('div', { className: 'feature-extra-props' });
-      const extraTitle = Utils.createElement('div', { className: 'extra-props-title' }, 'Additional Properties');
-      extraSection.appendChild(extraTitle);
-      extraProps.forEach(key => {
-        const row = Utils.createElement('div', { className: 'extra-prop-row' });
-        const k = Utils.createElement('span', { className: 'extra-prop-key' });
-        k.textContent = key + ':';
-        const v = Utils.createElement('span', { className: 'extra-prop-value' });
-        v.textContent = String(feature[key] !== null && feature[key] !== undefined ? feature[key] : '');
-        row.appendChild(k);
-        row.appendChild(v);
-        extraSection.appendChild(row);
+      extraSection.appendChild(Utils.createElement('div', { className: 'extra-props-title' }, 'Additional Properties'));
+      customProps.forEach(key => {
+        const group = Utils.createElement('div', { className: 'form-group' });
+        const label = Utils.createElement('label', { className: 'form-label' });
+        label.textContent = key;
+        // Keep numbers numeric so range styling and filters keep working.
+        const input = Utils.createElement('input', {
+          type: typeof feature[key] === 'number' ? 'number' : 'text',
+          className: 'form-control',
+          name: key
+        });
+        input.value = feature[key] !== null && feature[key] !== undefined ? feature[key] : '';
+        group.appendChild(label);
+        group.appendChild(input);
+        extraSection.appendChild(group);
       });
       form.appendChild(extraSection);
     }
@@ -634,8 +699,9 @@ const UIRenderer = {
 
       const lm = AppRegistry.require('layerManager');
       const ch = AppRegistry.require('commandHistory');
+      // Snapshot every field the form can change (standard + custom) so undo restores all of them.
       const oldProps = {};
-      editableFields.forEach(f => { oldProps[f] = feature[f]; });
+      Object.keys(updates).forEach(f => { oldProps[f] = feature[f]; });
       ch.execute(new UpdateFeatureCommand(lm, targetLayerId, feature.id, updates, oldProps));
       AppRegistry.require('syncController').scheduleSave();
       toastManager.success('Feature saved');

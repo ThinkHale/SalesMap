@@ -11,7 +11,7 @@ const ChoroplethPlugin = {
   minAppVersion: '4.0.0',
   defaultEnabled: false,
 
-  permissions: ['layers.read', 'map.read', 'ui.slot:toolbar', 'ui.modal', 'ui.toast', 'events.listen'],
+  permissions: ['layers.read', 'map.read', 'map.write', 'ui.slot:toolbar', 'ui.modal', 'ui.toast', 'events.listen'],
   configSchema: {},
 
   _api: null,
@@ -166,14 +166,12 @@ const ChoroplethPlugin = {
 
   _clear() {
     if (this._activeLayerId) {
-      const layer = this._api.layers.get(this._activeLayerId);
       const layerData = this._api.map.getLayerData(this._activeLayerId);
-      if (layer && layerData) {
-        layerData.polygons.forEach(p => {
-          const tierColor = AppConfig.colors.tierMap[String(p._featureData.tier || '').toLowerCase()];
-          const c = tierColor || layer.color || '#0078d4';
-          p.setOptions({ fillColor: c, strokeColor: c, fillOpacity: AppConfig.polygon.fillOpacity });
-        });
+      if (layerData) {
+        // Restore the fill opacity we overrode, then let the layer's own style
+        // rule decide the colors again.
+        layerData.polygons.forEach(p => p.setOptions({ fillOpacity: AppConfig.polygon.fillOpacity }));
+        this._api.map.applyLayerStyle(this._activeLayerId);
       }
     }
     this._activeLayerId = null;

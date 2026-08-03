@@ -145,7 +145,14 @@ class CSVParser {
       for (const [col, val] of Object.entries(row)) {
         if (systemCols.has(col)) continue;
         if (allow && !allow.has(col)) continue;
-        feature[col] = val;
+        // Column names become property keys, and those keys get persisted to
+        // Firebase — which forbids ". $ # [ ] /". Sanitize, then de-duplicate so a
+        // custom column never overwrites a mapped field or an earlier column.
+        const base = PropertyService.sanitizeKey(col);
+        let key = base;
+        let suffix = 2;
+        while (Object.prototype.hasOwnProperty.call(feature, key)) key = `${base} ${suffix++}`;
+        feature[key] = val;
       }
 
       return feature;

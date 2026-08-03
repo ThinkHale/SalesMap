@@ -32,6 +32,9 @@ const MapExport = {
       pinScale: l.pinScale ?? 1.0,
       showOnHeatmap: !!l.showOnHeatmap,
       clusterEnabled: l.clusterEnabled !== false,
+      // Property styling + popup fields so the export matches the live map.
+      styleRule: l.styleRule || null,
+      infoFields: l.infoFields || null,
       features: (l.features || []).map(f => ({ ...f }))
     })));
 
@@ -83,16 +86,19 @@ const MapExport = {
       }
     }
 
-    const [leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS] = await Promise.all([
+    const [leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS, propertyServiceJS] = await Promise.all([
       this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'),
       this._fetchInline('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js'),
       this._fetchInline('https://unpkg.com/wellknown@0.5.0/wellknown.js'),
       heatmapData ? this._fetchInline('https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js') : Promise.resolve(null),
       clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css') : Promise.resolve(null),
-      clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js') : Promise.resolve(null)
+      clusterSettings ? this._fetchInline('https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js') : Promise.resolve(null),
+      // Inlining the real PropertyService keeps exported colors and legends
+      // identical to the live map instead of reimplementing the rules here.
+      this._fetchInline('js/property-service.js')
     ]);
 
-    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, clusterSettings, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS }, globalPinScale);
+    const html = this._buildExportHTML(safeLayerData, mapCenter, mapZoom, heatmapData, clusterSettings, { leafletCSS, leafletJS, wellknownJS, leafletHeatJS, clusterCSS, clusterJS, propertyServiceJS }, globalPinScale);
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -133,6 +139,11 @@ const MapExport = {
       ? (assets.clusterJS
           ? `<script>${assets.clusterJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
           : '<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>')
+      : '';
+    // When the service can't be inlined the export still renders — it just falls
+    // back to tier/layer colors instead of property styling.
+    const propertyServiceTag = assets.propertyServiceJS
+      ? `<script>${assets.propertyServiceJS.replace(/<\/script>/gi, '<\\/script>')}<\/script>`
       : '';
     // Convert the deck.gl colorRange (array of 6 [r,g,b,a] stops) to leaflet.heat gradient format.
     // Stops are evenly spaced 0–1; alpha channel (0–255) becomes CSS opacity (0–1).
@@ -177,6 +188,7 @@ ${clusterCSSTag}
   .legend { background: white; border-radius: 8px; padding: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 200px; max-height: 300px; overflow-y: auto; }
   .legend-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #333; }
   .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; color: #555; }
+  .legend-sub-item { padding-left: 8px; font-size: 11px; color: #666; }
   .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
   .iw-row { font-size: 12px; margin-bottom: 3px; }
@@ -198,6 +210,7 @@ ${leafletJSTag}
 ${wellknownJSTag}
 ${heatScript}
 ${clusterJSTag}
+${propertyServiceTag}
 <script>
 const LAYER_DATA = JSON.parse(decodeURIComponent("${layerDataJSON}"));
 const TIER_COLORS = ${JSON.stringify(AppConfig.colors.tierMap)};
@@ -205,6 +218,37 @@ const PIN_PATH = ${JSON.stringify(pinPath)};
 const HEATMAP_MODE = ${heatmapData ? 'true' : 'false'};
 const CLUSTER_SETTINGS = ${clusterSettings ? JSON.stringify(clusterSettings) : 'null'};
 const GLOBAL_PIN_SCALE = ${Number(globalPinScale) || 1.0};
+const DEFAULT_POPUP_FIELDS = ${JSON.stringify(AppConfig.featureInfo.displayProperties)};
+const MAX_POPUP_FIELDS = ${AppConfig.featureInfo.maxPopupFields};
+const SYSTEM_KEYS = ${JSON.stringify([...PropertyService.SYSTEM_PROPERTIES])};
+const PS = typeof PropertyService !== 'undefined' ? PropertyService : null;
+
+// Mirrors MapManager.featureColor: a property style rule wins, then tier, then layer color.
+function featureColor(layer, feature) {
+  if (PS && PS.isRule(layer.styleRule)) {
+    return PS.resolveColor(layer.styleRule, feature, layer.color || '#0078d4');
+  }
+  return TIER_COLORS[String(feature.tier == null ? '' : feature.tier).toLowerCase()] || layer.color || '#0078d4';
+}
+
+function isSystemKey(key) {
+  return SYSTEM_KEYS.indexOf(String(key).toLowerCase()) !== -1 || String(key).charAt(0) === '_';
+}
+
+// Mirrors MapManager.infoFieldsFor so exported popups show the same custom columns.
+function popupFields(layer, feature) {
+  if (layer.infoFields && layer.infoFields.length) return layer.infoFields;
+  var fields = [], seen = { name: true };
+  function add(key) {
+    if (!key || seen[key] || isSystemKey(key)) return;
+    seen[key] = true;
+    fields.push(key);
+  }
+  if (layer.styleRule && layer.styleRule.property) add(layer.styleRule.property);
+  DEFAULT_POPUP_FIELDS.forEach(add);
+  Object.keys(feature).forEach(add);
+  return fields.slice(0, MAX_POPUP_FIELDS);
+}
 
 const map = L.map('map').setView([${center.lat}, ${center.lng}], ${zoom});
 
@@ -222,16 +266,34 @@ var LegendControl = L.Control.extend({
     div.appendChild(title);
     LAYER_DATA.forEach(function(layer) {
       if (!layer.visible) return;
+      var styled = PS && PS.isRule(layer.styleRule);
+
       var item = document.createElement('div');
       item.className = 'legend-item';
       var dot = document.createElement('div');
       dot.className = 'legend-dot';
       dot.style.background = layer.color || '#0078d4';
       var name = document.createElement('span');
-      name.textContent = layer.name;
-      item.appendChild(dot);
+      name.textContent = styled ? layer.name + ' — ' + layer.styleRule.property : layer.name;
+      if (!styled) item.appendChild(dot);
       item.appendChild(name);
       div.appendChild(item);
+
+      // Styled layers list their groups so the colors on the map are decodable.
+      if (!styled) return;
+      PS.legendItems(layer.styleRule, layer.features || []).forEach(function(entry) {
+        if (entry.count === 0) return;
+        var row = document.createElement('div');
+        row.className = 'legend-item legend-sub-item';
+        var swatch = document.createElement('div');
+        swatch.className = 'legend-dot';
+        swatch.style.background = entry.color;
+        var label = document.createElement('span');
+        label.textContent = entry.label + (entry.count != null ? ' (' + entry.count + ')' : '');
+        row.appendChild(swatch);
+        row.appendChild(label);
+        div.appendChild(row);
+      });
     });
     return div;
   }
@@ -247,13 +309,17 @@ function makeIcon(color, scale) {
   return L.divIcon({ html: svg, className: '', iconSize: [w, h], iconAnchor: [w/2, h], popupAnchor: [0, -h] });
 }
 
-function makePopupContent(feature) {
-  var html = '<div style="padding:4px"><div class="iw-title">' + (feature.name || 'Feature') + '</div>';
-  ['description','tier','bdm','revenue'].forEach(function(prop) {
-    if (feature[prop]) {
-      html += '<div class="iw-row"><span class="iw-label">' + prop + ':</span>'
-            + '<span class="iw-value">' + feature[prop] + '</span></div>';
-    }
+function escapeText(val) {
+  return String(val).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function makePopupContent(feature, layer) {
+  var html = '<div style="padding:4px"><div class="iw-title">' + escapeText(feature.name || 'Feature') + '</div>';
+  popupFields(layer, feature).forEach(function(prop) {
+    var v = feature[prop];
+    if (v === null || v === undefined || v === '') return;
+    html += '<div class="iw-row"><span class="iw-label">' + escapeText(prop) + ':</span>'
+          + '<span class="iw-value">' + escapeText(v) + '</span></div>';
   });
   return html + '</div>';
 }
@@ -278,9 +344,19 @@ function lightenColor(hex, pct) {
 function formatCount(count) {
   return count >= 1000 ? (count / 1000).toFixed(1) + 'K' : String(count);
 }
-function makeClusterIcon(cluster) {
+// Cluster color follows the layer's style rule (aggregated over the cluster's own
+// markers) when there is one, mirroring ClusterManager._clusterStyleFor.
+function clusterStyleFor(cluster, layer) {
+  var byCount = clusterStyle(cluster.getChildCount());
+  if (!PS || !PS.isRule(layer.styleRule) || layer.styleRule.applyToClusters === false) return byCount;
+  var feats = cluster.getAllChildMarkers().map(function(m) { return m._feature; }).filter(Boolean);
+  var agg = PS.aggregate(layer.styleRule, feats, layer.color || '#0078d4');
+  return { color: (agg && agg.color) || byCount.color, size: byCount.size };
+}
+
+function makeClusterIcon(cluster, layer) {
   var count = cluster.getChildCount();
-  var s = clusterStyle(count);
+  var s = clusterStyleFor(cluster, layer);
   var light = lightenColor(s.color, 20);
   var label = formatCount(count);
   var fontSize = label.length <= 2 ? 12 : (label.length === 3 ? 10 : 8.5);
@@ -313,7 +389,7 @@ LAYER_DATA.forEach(function(layer) {
         spiderfyOnMaxZoom: true,
         showCoverageOnHover: false,
         chunkedLoading: true,
-        iconCreateFunction: makeClusterIcon
+        iconCreateFunction: function(cluster) { return makeClusterIcon(cluster, layer); }
       })
     : null;
 
@@ -323,22 +399,23 @@ LAYER_DATA.forEach(function(layer) {
         var parsed = wellknown ? wellknown.parse(feature.wkt) : null;
         if (parsed && parsed.coordinates) {
           var latlngs = parsed.coordinates[0].map(function(c) { return [c[1], c[0]]; });
-          var fillColor = TIER_COLORS[String(feature.tier || '').toLowerCase()] || layer.color || '#0078d4';
+          var fillColor = featureColor(layer, feature);
           L.polygon(latlngs, {
             fillColor: fillColor,
             fillOpacity: 0.35,
-            color: layer.color || '#0078d4',
+            color: fillColor,
             weight: 2
-          }).bindPopup(makePopupContent(feature)).addTo(map);
+          }).bindPopup(makePopupContent(feature, layer)).addTo(map);
         }
       } catch(e) {}
     } else if (renderPins && feature.latitude && feature.longitude) {
-      var tierColor = TIER_COLORS[String(feature.tier || '').toLowerCase()];
-      var color = tierColor || layer.color || '#0078d4';
+      var color = featureColor(layer, feature);
       var marker = L.marker(
         [parseFloat(feature.latitude), parseFloat(feature.longitude)],
         { icon: makeIcon(color, layerScale), title: feature.name || '' }
-      ).bindPopup(makePopupContent(feature));
+      ).bindPopup(makePopupContent(feature, layer));
+      // Clusters need their members' data to compute an aggregate color.
+      marker._feature = feature;
       if (clusterGroup) {
         clusterGroup.addLayer(marker);
       } else {
