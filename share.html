@@ -10,17 +10,37 @@
   #header { background: #0078d4; color: white; padding: 12px 20px; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
   #header h1 { font-size: 16px; font-weight: 600; }
   #header .subtitle { font-size: 12px; opacity: 0.8; }
-  .read-only-badge { background: #e8f4fc; color: #0078d4; font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid #b3d7f0; flex-shrink: 0; }
-  #heatToggle { display: none; margin-left: auto; padding: 4px 12px; background: rgba(255,255,255,0.15); color: white; border: 1px solid rgba(255,255,255,0.5); border-radius: 10px; font-size: 11px; cursor: pointer; flex-shrink: 0; }
-  #heatToggle.active { background: white; color: #0078d4; border-color: #b3d7f0; }
+  /* margin-left:auto keeps the badge at the right edge now that the old heatmap
+     button (which used to fill that gap) lives in the view panel instead. */
+  .read-only-badge { background: #e8f4fc; color: #0078d4; font-size: 11px; padding: 2px 8px; border-radius: 10px; border: 1px solid #b3d7f0; flex-shrink: 0; margin-left: auto; }
   #map { flex: 1; min-height: 0; display: none; }
   #status { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 15px; color: #555; padding: 20px; text-align: center; }
   #status.error { color: #c00; }
-  .legend { background: white; border-radius: 8px; padding: 12px; margin: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.2); max-width: 220px; max-height: 40vh; overflow-y: auto; }
-  .legend-title { font-weight: 600; font-size: 13px; margin-bottom: 8px; color: #333; }
-  .legend-item { display: flex; align-items: center; gap: 8px; font-size: 12px; margin-bottom: 4px; color: #555; }
-  .legend-sub-item { padding-left: 8px; font-size: 11px; color: #666; }
-  .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Viewer controls — presentation only, no editing */
+  .view-panel { background: #fff; border-radius: 8px; margin: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.25); width: 232px; max-width: calc(100vw - 24px); font-size: 12px; overflow: hidden; }
+  .vp-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; background: #f3f2f1; font-weight: 600; color: #323130; }
+  .vp-collapse { border: none; background: transparent; font-size: 16px; line-height: 1; cursor: pointer; color: #605e5c; padding: 0 2px; }
+  .vp-body { max-height: 46vh; overflow-y: auto; }
+  .vp-section { padding: 8px 10px; }
+  .vp-section + .vp-section { border-top: 1px solid #edebe9; }
+  .vp-section-head { display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: 600; color: #605e5c; text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }
+  .vp-bulk button { border: none; background: transparent; color: #0078d4; cursor: pointer; font-size: 11px; padding: 0 2px; }
+  .vp-bulk button:hover { text-decoration: underline; }
+  .vp-toggle { display: flex; align-items: center; gap: 6px; padding: 3px 0; cursor: pointer; color: #323130; }
+  .vp-toggle input { margin: 0; }
+  .vp-toggle.vp-disabled { color: #a19f9d; cursor: default; }
+  .vp-layer { display: flex; align-items: center; gap: 6px; padding: 3px 0; }
+  .vp-layer input { margin: 0; flex-shrink: 0; }
+  .vp-dot { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; border: 1px solid rgba(0,0,0,0.1); }
+  .vp-layer-name { flex: 1; min-width: 0; text-align: left; border: none; background: transparent; padding: 0; font: inherit; color: #323130; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vp-layer-name:hover { color: #0078d4; text-decoration: underline; }
+  .vp-count { color: #a19f9d; font-size: 11px; flex-shrink: 0; }
+  .vp-groups { margin: 1px 0 6px 22px; }
+  .vp-group-prop { font-size: 10px; color: #a19f9d; text-transform: capitalize; margin-bottom: 2px; }
+  .vp-group { display: flex; align-items: center; gap: 6px; padding: 1px 0; font-size: 11px; color: #605e5c; }
+  .vp-group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .vp-note { padding: 8px 10px; border-top: 1px solid #edebe9; font-size: 10px; color: #a19f9d; }
   .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
   .iw-row { font-size: 12px; margin-bottom: 3px; }
   .iw-label { font-weight: 500; color: #555; margin-right: 4px; text-transform: capitalize; }
@@ -33,7 +53,6 @@
     <h1>SalesMap — Shared View</h1>
     <div class="subtitle" id="subtitle">Loading…</div>
   </div>
-  <button type="button" id="heatToggle">Heatmap</button>
   <span class="read-only-badge">View Only</span>
 </div>
 <div id="status">Loading map…</div>
@@ -258,6 +277,11 @@
       this._canvas = canvas;
       this.getPanes().overlayLayer.appendChild(canvas);
     };
+    // Points change as the viewer shows and hides layers.
+    HeatCanvasOverlay.prototype.setPoints = function (pts) {
+      this._points = pts;
+      if (this.getMap()) this.draw();
+    };
     HeatCanvasOverlay.prototype.onRemove = function () {
       if (this._canvas && this._canvas.parentNode) this._canvas.parentNode.removeChild(this._canvas);
       this._canvas = null;
@@ -345,113 +369,73 @@
 
     var infoWindow = new google.maps.InfoWindow();
 
-    // Legend (visible layers)
-    var legend = document.createElement('div');
-    legend.className = 'legend';
-    var lt = document.createElement('div');
-    lt.className = 'legend-title';
-    lt.textContent = 'Layers';
-    legend.appendChild(lt);
-    (snapshot.layers || []).forEach(function (layer) {
-      if (!layer.visible) return;
-      var styled = PropertyService.isRule(layer.styleRule);
-
-      var item = document.createElement('div');
-      item.className = 'legend-item';
-      var dot = document.createElement('div');
-      dot.className = 'legend-dot';
-      dot.style.background = layer.color || '#0078d4';
-      var name = document.createElement('span');
-      name.textContent = styled ? layer.name + ' — ' + layer.styleRule.property : layer.name;
-      if (!styled) item.appendChild(dot);
-      item.appendChild(name);
-      legend.appendChild(item);
-
-      // Styled layers list their groups so map colors stay decodable.
-      if (!styled) return;
-      PropertyService.legendItems(layer.styleRule, layer.features || []).forEach(function (entry) {
-        if (entry.count === 0) return;
-        var row = document.createElement('div');
-        row.className = 'legend-item legend-sub-item';
-        var swatch = document.createElement('div');
-        swatch.className = 'legend-dot';
-        swatch.style.background = entry.color;
-        var label = document.createElement('span');
-        label.textContent = entry.label + (entry.count != null ? ' (' + entry.count + ')' : '');
-        row.appendChild(swatch);
-        row.appendChild(label);
-        legend.appendChild(row);
-      });
-    });
-    map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(legend);
-
-    var cs = snapshot.clusterSettings;
-    var heatHideable = [];   // {type:'cluster'|'markers', obj/list} hidden when heatmap is on
-    var persistent = [];     // showOnHeatmap groups — stay visible over the heat canvas
-    var heatPoints = [];
-
     function openInfo(feature, layer, target, position) {
       infoWindow.setContent(infoWindowContent(feature, layer));
       if (position) { infoWindow.setPosition(position); infoWindow.open(map); }
       else { infoWindow.open(map, target); }
     }
 
-    (snapshot.layers || []).forEach(function (layer) {
-      if (!layer.visible) return;
+    // ── View state ───────────────────────────────────────────────────────────
+    // Everything below is presentation only: the viewer can re-arrange how the
+    // snapshot is displayed, but nothing here writes back to the snapshot or to
+    // Firebase, and no feature is editable.
+    var cs = snapshot.clusterSettings || null;
+    var clusterCfg = {
+      gridSize:       (cs && cs.gridSize)       || 60,
+      maxZoom:        (cs && cs.maxZoom)        || 16,
+      minClusterSize: (cs && cs.minClusterSize) || 2
+    };
+    var canCluster = typeof markerClusterer !== 'undefined' && !!markerClusterer.MarkerClusterer;
+    // Snapshots taken before view controls existed omitted clusterSettings when
+    // the author had clustering off; treat that as "off, but switchable".
+    var viewState = {
+      cluster: canCluster && (cs ? cs.enabled !== false : false),
+      heat: false
+    };
+
+    var heatParams = snapshot.heatmapParams || snapshot.heatmap || null;
+    var heatOverlay = null;
+    var heatOnMap = false;
+
+    // One record per layer holding its rendered objects, so visibility and
+    // clustering can be re-applied without re-parsing the snapshot.
+    var layerViews = (snapshot.layers || []).map(function (layer) {
+      var view = {
+        layer: layer,
+        markers: [],
+        polygons: [],
+        points: [],          // LatLngs for the heat overlay
+        clusterGroup: null,
+        visible: layer.visible !== false
+      };
       var layerScale = (layer.pinScale != null ? layer.pinScale : 1);
-      var clustered = cs && layer.clusterEnabled !== false;
-      var markers = [];
 
       (layer.features || []).forEach(function (feature) {
-        if (feature.wkt) {
-          renderPolygon(feature, layer);
-          return;
-        }
+        if (feature.wkt) { buildPolygons(view, feature); return; }
         var lat = parseFloat(feature.latitude), lng = parseFloat(feature.longitude);
         if (isNaN(lat) || isNaN(lng)) return;
 
-        heatPoints.push(new google.maps.LatLng(lat, lng));
-
-        var color = featureColorFor(feature, layer);
         var marker = new google.maps.Marker({
           position: { lat: lat, lng: lng },
           title: feature.name || '',
-          icon: makeMarkerIcon(color, layerScale)
+          icon: makeMarkerIcon(featureColorFor(feature, layer), layerScale)
         });
         // Clusters need their members' data to compute an aggregate color.
         marker._feature = feature;
         marker.addListener('click', function () { openInfo(feature, layer, marker); });
-        markers.push(marker);
+        view.markers.push(marker);
+        view.points.push(new google.maps.LatLng(lat, lng));
       });
 
-      if (markers.length === 0) return;
-
-      var group;
-      if (clustered && typeof markerClusterer !== 'undefined' && markerClusterer.MarkerClusterer) {
-        var algorithm = markerClusterer.GridAlgorithm
-          ? new markerClusterer.GridAlgorithm({ gridSize: cs.gridSize || 60, maxZoom: cs.maxZoom || 16, minClusterSize: cs.minClusterSize || 2 })
-          : undefined;
-        group = new markerClusterer.MarkerClusterer({
-          map: map,
-          markers: markers,
-          renderer: buildClusterRenderer(layer),
-          algorithm: algorithm
-        });
-        (layer.showOnHeatmap ? persistent : heatHideable).push({ type: 'cluster', obj: group, list: markers });
-      } else {
-        markers.forEach(function (m) { m.setMap(map); });
-        (layer.showOnHeatmap ? persistent : heatHideable).push({ type: 'markers', list: markers });
-      }
+      return view;
     });
 
-    function renderPolygon(feature, layer) {
+    function buildPolygons(view, feature) {
       var parsed;
       try { parsed = wellknown ? wellknown.parse(feature.wkt) : null; } catch (e) { return; }
       if (!parsed || !parsed.coordinates) return;
-      var rings = parsed.type === 'MultiPolygon'
-        ? parsed.coordinates
-        : [parsed.coordinates];
-      var fillColor = featureColorFor(feature, layer);
+      var rings = parsed.type === 'MultiPolygon' ? parsed.coordinates : [parsed.coordinates];
+      var fillColor = featureColorFor(feature, view.layer);
       rings.forEach(function (polyCoords) {
         var paths = polyCoords.map(function (ring) {
           return ring.map(function (c) { return { lat: c[1], lng: c[0] }; });
@@ -462,51 +446,327 @@
           fillOpacity: AppConfig.polygon.fillOpacity,
           strokeColor: fillColor,
           strokeWeight: AppConfig.polygon.strokeWeight,
-          strokeOpacity: 0.8,
-          map: map
+          strokeOpacity: 0.8
         });
-        polygon.addListener('click', function (e) { openInfo(feature, layer, null, e.latLng); });
+        polygon.addListener('click', function (e) { openInfo(feature, view.layer, null, e.latLng); });
+        view.polygons.push(polygon);
       });
     }
 
-    // ── Heatmap toggle ──
-    var hm = snapshot.heatmap;
-    if (hm && hm.points && hm.points.length) {
-      var heatOverlay = createHeatOverlay(heatPoints, {
-        radius:    hm.radius    || 45,
-        intensity: hm.intensity || 1,
-        smoothing: hm.threshold != null ? hm.threshold : 0.1,
-        opacity:   hm.opacity   || 0.7,
-        palette:   Array.isArray(hm.colorRange) ? buildPalette(hm.colorRange) : null
+    // ── Applying the view ────────────────────────────────────────────────────
+
+    function clusterAlgorithm() {
+      return markerClusterer.GridAlgorithm
+        ? new markerClusterer.GridAlgorithm({
+            gridSize: clusterCfg.gridSize,
+            maxZoom: clusterCfg.maxZoom,
+            minClusterSize: clusterCfg.minClusterSize
+          })
+        : undefined;
+    }
+
+    function pinsVisible(view) {
+      // With the heatmap on, only layers the author flagged draw pins on top of it.
+      return view.visible && (!viewState.heat || !!view.layer.showOnHeatmap);
+    }
+
+    function isClustered(view) {
+      return viewState.cluster && canCluster && view.layer.clusterEnabled !== false;
+    }
+
+    // Unclustered markers all go on the map at once, so cull to the viewport past
+    // a threshold — turning clustering off is one click away now.
+    var CULL_ABOVE = 1500;
+    var cullListener = null;
+    var cullTimer = null;
+
+    function cullNeeded() {
+      var loose = 0;
+      layerViews.forEach(function (v) {
+        if (pinsVisible(v) && !isClustered(v)) loose += v.markers.length;
+      });
+      return loose > CULL_ABOVE;
+    }
+
+    function placeMarkers(markers, cull) {
+      var bounds = cull ? map.getBounds() : null;
+      markers.forEach(function (m) {
+        m.setMap(!bounds || bounds.contains(m.getPosition()) ? map : null);
+      });
+    }
+
+    function recull() {
+      layerViews.forEach(function (v) {
+        if (v.clusterGroup || !pinsVisible(v)) return;
+        placeMarkers(v.markers, true);
+      });
+    }
+
+    function setCulling(active) {
+      if (active && !cullListener) {
+        cullListener = map.addListener('bounds_changed', function () {
+          clearTimeout(cullTimer);
+          cullTimer = setTimeout(recull, 120);
+        });
+      } else if (!active && cullListener) {
+        google.maps.event.removeListener(cullListener);
+        cullListener = null;
+      }
+    }
+
+    function applyView() {
+      var cull = cullNeeded();
+
+      layerViews.forEach(function (v) {
+        v.polygons.forEach(function (p) { p.setMap(v.visible ? map : null); });
+
+        // Rebuild rather than mutate: recreating the clusterer is the reliable way
+        // to avoid stale cluster glyphs (same approach as the app's ClusterManager).
+        if (v.clusterGroup) {
+          try { v.clusterGroup.clearMarkers(); v.clusterGroup.setMap(null); } catch (e) {}
+          v.clusterGroup = null;
+        }
+        v.markers.forEach(function (m) { m.setMap(null); });
+
+        if (!pinsVisible(v) || v.markers.length === 0) return;
+
+        if (isClustered(v)) {
+          v.clusterGroup = new markerClusterer.MarkerClusterer({
+            map: map,
+            markers: v.markers,
+            renderer: buildClusterRenderer(v.layer),
+            algorithm: clusterAlgorithm()
+          });
+        } else {
+          placeMarkers(v.markers, cull);
+        }
       });
 
-      function setGroupVisible(g, visible) {
-        if (g.type === 'cluster') {
-          // Mirror ClusterManager's heatmap hide/show: clear then re-add markers
-          // (proven path — avoids stale cluster glyphs left behind by setMap).
-          if (visible) g.obj.addMarkers(g.list);
-          else g.obj.clearMarkers();
-        } else {
-          g.list.forEach(function (m) { m.setMap(visible ? map : null); });
-        }
+      setCulling(cull);
+      applyHeat();
+    }
+
+    function heatPoints() {
+      var pts = [];
+      layerViews.forEach(function (v) {
+        if (v.visible) pts = pts.concat(v.points);
+      });
+      return pts;
+    }
+
+    function applyHeat() {
+      var pts = viewState.heat ? heatPoints() : [];
+      if (pts.length === 0) {
+        if (heatOverlay && heatOnMap) { heatOverlay.setMap(null); heatOnMap = false; }
+        return;
+      }
+      if (!heatOverlay) {
+        heatOverlay = createHeatOverlay(pts, {
+          radius:    (heatParams && heatParams.radius)    || 45,
+          intensity: (heatParams && heatParams.intensity) || 1,
+          smoothing: (heatParams && heatParams.threshold != null) ? heatParams.threshold : 0.1,
+          opacity:   (heatParams && heatParams.opacity)   || 0.7,
+          palette:   (heatParams && Array.isArray(heatParams.colorRange)) ? buildPalette(heatParams.colorRange) : null
+        });
+      } else {
+        heatOverlay.setPoints(pts);
+      }
+      if (!heatOnMap) { heatOverlay.setMap(map); heatOnMap = true; }
+    }
+
+    function zoomToLayer(view) {
+      var bounds = new google.maps.LatLngBounds();
+      var any = false;
+      view.markers.forEach(function (m) { bounds.extend(m.getPosition()); any = true; });
+      view.polygons.forEach(function (p) {
+        var paths = typeof p.getPaths === 'function' ? p.getPaths() : null;
+        if (paths) paths.forEach(function (ring) { ring.forEach(function (pt) { bounds.extend(pt); any = true; }); });
+        else p.getPath().forEach(function (pt) { bounds.extend(pt); any = true; });
+      });
+      if (any) map.fitBounds(bounds, 40);
+    }
+
+    // ── Control panel ────────────────────────────────────────────────────────
+
+    function makeToggle(parent, label, checked, onChange) {
+      var row = document.createElement('label');
+      row.className = 'vp-toggle';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = checked;
+      cb.addEventListener('change', function () { onChange(cb.checked); });
+      row.appendChild(cb);
+      row.appendChild(document.createTextNode(' ' + label));
+      parent.appendChild(row);
+      return cb;
+    }
+
+    function makeLink(text, title, onClick) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = text;
+      b.title = title;
+      b.addEventListener('click', onClick);
+      return b;
+    }
+
+    function buildPanel() {
+      var panel = document.createElement('div');
+      panel.className = 'view-panel';
+
+      var header = document.createElement('div');
+      header.className = 'vp-header';
+      var title = document.createElement('span');
+      title.textContent = 'Layers & view';
+      var collapse = document.createElement('button');
+      collapse.type = 'button';
+      collapse.className = 'vp-collapse';
+      collapse.textContent = '–';
+      collapse.title = 'Collapse';
+      collapse.setAttribute('aria-label', 'Collapse panel');
+      header.appendChild(title);
+      header.appendChild(collapse);
+      panel.appendChild(header);
+
+      var bodyEl = document.createElement('div');
+      bodyEl.className = 'vp-body';
+      panel.appendChild(bodyEl);
+      collapse.addEventListener('click', function () {
+        var collapsed = bodyEl.style.display === 'none';
+        bodyEl.style.display = collapsed ? '' : 'none';
+        collapse.textContent = collapsed ? '–' : '+';
+        collapse.title = collapsed ? 'Collapse' : 'Expand';
+      });
+
+      // Display options
+      var viewSec = document.createElement('div');
+      viewSec.className = 'vp-section';
+      var clusterCb = makeToggle(viewSec, 'Cluster pins', viewState.cluster, function (on) {
+        viewState.cluster = on;
+        applyView();
+      });
+      if (!canCluster) {
+        clusterCb.disabled = true;
+        clusterCb.parentNode.className += ' vp-disabled';
+        clusterCb.parentNode.title = 'Clustering library unavailable';
+      }
+      var totalPoints = layerViews.reduce(function (n, v) { return n + v.points.length; }, 0);
+      var heatCb = makeToggle(viewSec, 'Heatmap', viewState.heat, function (on) {
+        viewState.heat = on;
+        applyView();
+      });
+      if (totalPoints === 0) {
+        heatCb.disabled = true;
+        heatCb.parentNode.className += ' vp-disabled';
+        heatCb.parentNode.title = 'This map has no point data to build a heatmap from';
+      }
+      bodyEl.appendChild(viewSec);
+
+      // Layers
+      var layerSec = document.createElement('div');
+      layerSec.className = 'vp-section';
+      var head = document.createElement('div');
+      head.className = 'vp-section-head';
+      var headTitle = document.createElement('span');
+      headTitle.textContent = 'Layers';
+      var bulk = document.createElement('span');
+      bulk.className = 'vp-bulk';
+      var setAll = function (on) {
+        layerViews.forEach(function (v) {
+          v.visible = on;
+          if (v.checkbox) v.checkbox.checked = on;
+        });
+        applyView();
+      };
+      bulk.appendChild(makeLink('All', 'Show every layer', function () { setAll(true); }));
+      bulk.appendChild(makeLink('None', 'Hide every layer', function () { setAll(false); }));
+      head.appendChild(headTitle);
+      head.appendChild(bulk);
+      layerSec.appendChild(head);
+
+      layerViews.forEach(function (v) { layerSec.appendChild(buildLayerRow(v)); });
+      bodyEl.appendChild(layerSec);
+
+      var note = document.createElement('div');
+      note.className = 'vp-note';
+      note.textContent = 'View controls only — the shared data cannot be changed.';
+      bodyEl.appendChild(note);
+
+      return panel;
+    }
+
+    function buildLayerRow(view) {
+      var layer = view.layer;
+      var styled = PropertyService.isRule(layer.styleRule);
+      var wrap = document.createElement('div');
+
+      var row = document.createElement('div');
+      row.className = 'vp-layer';
+
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = view.visible;
+      cb.title = 'Show or hide this layer';
+      cb.addEventListener('change', function () {
+        view.visible = cb.checked;
+        applyView();
+      });
+      view.checkbox = cb;
+      row.appendChild(cb);
+
+      // A single swatch only makes sense when the layer is one color.
+      if (!styled) {
+        var dot = document.createElement('span');
+        dot.className = 'vp-dot';
+        dot.style.background = layer.color || '#0078d4';
+        row.appendChild(dot);
       }
 
-      var toggleBtn = document.getElementById('heatToggle');
-      toggleBtn.style.display = 'block';
-      var heatOn = false;
-      toggleBtn.addEventListener('click', function () {
-        heatOn = !heatOn;
-        if (heatOn) {
-          heatHideable.forEach(function (g) { setGroupVisible(g, false); });
-          heatOverlay.setMap(map);
-          toggleBtn.classList.add('active');
-        } else {
-          heatOverlay.setMap(null);
-          heatHideable.forEach(function (g) { setGroupVisible(g, true); });
-          toggleBtn.classList.remove('active');
-        }
-      });
+      var name = document.createElement('button');
+      name.type = 'button';
+      name.className = 'vp-layer-name';
+      name.textContent = layer.name;
+      name.title = 'Zoom to “' + layer.name + '”';
+      name.addEventListener('click', function () { zoomToLayer(view); });
+      row.appendChild(name);
+
+      var count = document.createElement('span');
+      count.className = 'vp-count';
+      count.textContent = (layer.features || []).length;
+      row.appendChild(count);
+
+      wrap.appendChild(row);
+
+      // Styled layers list their groups so the colors stay decodable.
+      if (styled) {
+        var groups = document.createElement('div');
+        groups.className = 'vp-groups';
+        var propLabel = document.createElement('div');
+        propLabel.className = 'vp-group-prop';
+        propLabel.textContent = layer.styleRule.property;
+        groups.appendChild(propLabel);
+        PropertyService.legendItems(layer.styleRule, layer.features || []).forEach(function (entry) {
+          if (entry.count === 0) return;
+          var g = document.createElement('div');
+          g.className = 'vp-group';
+          var swatch = document.createElement('span');
+          swatch.className = 'vp-dot';
+          swatch.style.background = entry.color;
+          var label = document.createElement('span');
+          label.className = 'vp-group-label';
+          label.textContent = entry.label + (entry.count != null ? ' (' + entry.count + ')' : '');
+          g.appendChild(swatch);
+          g.appendChild(label);
+          groups.appendChild(g);
+        });
+        wrap.appendChild(groups);
+      }
+
+      return wrap;
     }
+
+    map.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(buildPanel());
+    applyView();
   }
 
   // ── Load snapshot ──────────────────────────────────────────────────────────

@@ -14,6 +14,8 @@ SalesMap is a browser-based sales territory mapping application built with Googl
   "smart" numeric ranges (0–100K, 100K–250K, …) with an on-map legend
 - Built-in analytics panel for revenue, tier, and account insights
 - Real-time workspace sync via Firebase
+- Share read-only links where the viewer can show/hide layers and switch clustering and the
+  heatmap on and off — presentation only, with no way to edit the underlying data
 - Export view-only HTML map files
 - Plugin support for toolbar, sidebar, context menu, storage, and events
 - Undo / redo command history

@@ -11,49 +11,39 @@ const MapShare = {
       : { lat: AppConfig.map.defaultCenter.lat, lng: AppConfig.map.defaultCenter.lng };
     const zoom = mapManager ? mapManager.map.getZoom() : AppConfig.map.defaultZoom;
 
-    let heatmap = null;
+    // Heatmap styling only — the share page derives the points from whichever
+    // layers the viewer has visible, so they can switch the heatmap on even if it
+    // was off when the link was made (and the snapshot stays much smaller).
+    let heatmapParams = null;
     if (AppRegistry.has('pluginRegistry')) {
       const pluginDef = AppRegistry.get('pluginRegistry').getDefinition('heatmap-overlay');
-      // Only include heatmap data when it is actually active
-      if (pluginDef && pluginDef._isActive && pluginDef._api) {
+      if (pluginDef && pluginDef._api) {
         const cfg = pluginDef._api.config.get();
-        const points = [];
-        layers.forEach(layer => {
-          if (!layer.visible || layer.type === 'polygon') return;
-          (layer.features || []).forEach(feature => {
-            const lat = parseFloat(feature.latitude);
-            const lng = parseFloat(feature.longitude);
-            if (!isNaN(lat) && !isNaN(lng)) points.push([lat, lng, 1]);
-          });
-        });
-        if (points.length > 0) {
-          heatmap = {
-            points,
-            colorRange: pluginDef._colorRanges[cfg.gradient] || pluginDef._colorRanges.default,
-            radius:    cfg.radius    || 30,
-            opacity:   cfg.opacity   || 0.7,
-            intensity: cfg.intensity || 1,
-            threshold: cfg.threshold || 0.05
-          };
-        }
+        heatmapParams = {
+          colorRange: pluginDef._colorRanges[cfg.gradient] || pluginDef._colorRanges.default,
+          radius:    cfg.radius    || 30,
+          opacity:   cfg.opacity   || 0.7,
+          intensity: cfg.intensity || 1,
+          threshold: cfg.threshold || 0.05
+        };
       }
     }
 
-    // Cluster settings are emitted even alongside a heatmap so that layers flagged
-    // showOnHeatmap still cluster their pins on top of the heat layer.
-    let clusterSettings = null;
+    // Cluster settings are always emitted, with the author's on/off state as a
+    // starting point the viewer can change. (They're also needed alongside a
+    // heatmap so layers flagged showOnHeatmap still cluster their pins on top.)
     let globalPinScale = 1.0;
+    let clusterSettings = { enabled: false, maxZoom: 16, minClusterSize: 2, gridSize: 60 };
     if (AppRegistry.has('clusterManager')) {
       const cm = AppRegistry.get('clusterManager');
       const s = cm._settings || cm._defaultSettings();
       globalPinScale = s.pinScale ?? 1.0;
-      if (s.enabled !== false && cm._enabled !== false) {
-        clusterSettings = {
-          maxZoom:        s.maxZoom        ?? 16,
-          minClusterSize: s.minClusterSize ?? 2,
-          gridSize:       s.gridSize       ?? 60
-        };
-      }
+      clusterSettings = {
+        enabled:        s.enabled !== false && cm._enabled !== false,
+        maxZoom:        s.maxZoom        ?? 16,
+        minClusterSize: s.minClusterSize ?? 2,
+        gridSize:       s.gridSize       ?? 60
+      };
     }
 
     const snapshot = {
@@ -76,7 +66,7 @@ const MapShare = {
       tierColors: AppConfig.colors.tierMap,
       pinPath: AppConfig.marker.pinPath,
       globalPinScale,
-      heatmap,
+      heatmapParams,
       clusterSettings,
       createdAt: new Date().toISOString()
     };
