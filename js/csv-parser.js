@@ -7,39 +7,98 @@ class CSVParser {
 
   async parseFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
-    let rawData;
+    let sheets;
 
     if (ext === 'csv' || ext === 'txt') {
-      rawData = await this._parseCSVFile(file);
+      sheets = [{ name: file.name.replace(/\.[^.]+$/, ''), rows: await this._parseCSVFile(file) }];
     } else if (ext === 'xlsx' || ext === 'xls') {
-      rawData = await this._parseExcelFile(file);
+      sheets = await this._parseExcelFile(file);
     } else {
       throw AppErrorHandler.create(`Unsupported file type: .${ext}`, `Unsupported file type: .${ext}. Please upload a CSV or Excel file.`);
     }
 
-    if (!rawData || rawData.length === 0) {
-      throw AppErrorHandler.create('File is empty', 'The file appears to be empty or contains no data rows.');
+    const withData = (sheets || []).filter(s => s.rows && s.rows.length > 0);
+    if (withData.length === 0) {
+      const tabNote = (sheets || []).length > 1
+        ? ` None of its ${sheets.length} tabs (${sheets.map(s => s.name).join(', ')}) contain data rows.`
+        : '';
+      throw AppErrorHandler.create('File is empty', `The file appears to be empty or contains no data rows.${tabNote}`);
     }
 
-    const originalColumns = Object.keys(rawData[0] || {});
-    const columnMap = this.detectColumnMappings(originalColumns);
-    const dataType = this.detectDataType(columnMap);
-    const needsGeocoding = dataType === 'address';
-
-    let features = [];
-    if (dataType !== 'address') {
-      features = this.extractFeatures(rawData, columnMap, dataType);
-    }
+    // Analyze every tab so the wizard can offer them all, then default to the one
+    // that actually looks like data (a cover page or summary tab is not it).
+    const analyzed = sheets.map(sheet => this.analyzeSheet(sheet));
+    const primary = this._pickDefaultSheet(analyzed);
 
     return {
-      features,
-      type: dataType,
+      ...this._pendingShapeFor(primary),
+      // Every tab in the workbook, for the import wizard's tab picker.
+      sheets: analyzed,
+      sheetName: primary.name
+    };
+  }
+
+  // Per-tab analysis: detected columns, mapping, data type, and a signature used
+  // to tell which tabs share a schema (and can therefore share one mapping).
+  analyzeSheet(sheet) {
+    const rows = sheet.rows || [];
+    const columns = rows.length > 0 ? Object.keys(rows[0]) : [];
+    const columnMap = this.detectColumnMappings(columns);
+    return {
+      name: sheet.name,
+      rows,
+      columns,
+      rowCount: rows.length,
       columnMap,
-      originalColumns,
-      rowCount: rawData.length,
-      rawData,
+      type: this.detectDataType(columnMap),
+      signature: this.headerSignature(columns)
+    };
+  }
+
+  // Tabs with the same set of column names can reuse a single column mapping.
+  headerSignature(columns) {
+    return (columns || []).map(c => String(c).toLowerCase().trim()).sort().join('|');
+  }
+
+  // The shape the import wizard consumes for a single tab.
+  _pendingShapeFor(analysis) {
+    const needsGeocoding = analysis.type === 'address';
+    return {
+      features: needsGeocoding ? [] : this.extractFeatures(analysis.rows, analysis.columnMap, analysis.type),
+      type: analysis.type,
+      columnMap: analysis.columnMap,
+      originalColumns: analysis.columns,
+      rowCount: analysis.rowCount,
+      rawData: analysis.rows,
       needsGeocoding
     };
+  }
+
+  // Rank tabs by how much they look like a real dataset so multi-tab workbooks
+  // don't default to a cover page or a summary pivot.
+  _pickDefaultSheet(analyzed) {
+    const score = s => {
+      if (s.rowCount === 0) return -1;
+      let n = 0;
+      // Geometry is the strongest signal that this is the data.
+      if (s.columnMap.latitude && s.columnMap.longitude) n += 1000;
+      if (s.columnMap.wkt) n += 1000;
+      // Then address parts, then any recognized field at all.
+      if (s.columnMap.street || s.columnMap.city || s.columnMap.zipCode) n += 200;
+      n += Object.keys(s.columnMap).length * 20;
+      if (s.columns.length >= 3) n += 10;
+      return n;
+    };
+    let best = analyzed[0];
+    let bestScore = score(best);
+    analyzed.forEach(s => {
+      const n = score(s);
+      // Earlier tabs win ties, preserving the old "first tab" behavior.
+      if (n > bestScore) { best = s; bestScore = n; }
+    });
+    // Every tab scored as junk — fall back to the first one holding any rows.
+    if (bestScore < 0) best = analyzed.find(s => s.rowCount > 0) || analyzed[0];
+    return best;
   }
 
   _parseCSVFile(file) {
@@ -63,6 +122,7 @@ class CSVParser {
     });
   }
 
+  // Reads every tab in the workbook — the wizard decides which ones to import.
   _parseExcelFile(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -70,9 +130,10 @@ class CSVParser {
         try {
           const data = new Uint8Array(e.target.result);
           const wb = XLSX.read(data, { type: 'array' });
-          const sheet = wb.Sheets[wb.SheetNames[0]];
-          const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
-          resolve(rows);
+          resolve((wb.SheetNames || []).map(name => ({
+            name,
+            rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' })
+          })));
         } catch (err) {
           reject(new Error(`Excel parse error: ${err.message}`));
         }

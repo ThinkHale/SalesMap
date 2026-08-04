@@ -21,6 +21,22 @@ class CreateLayerCommand {
   }
 }
 
+// Runs several commands as one history entry — e.g. importing a workbook's tabs
+// into one layer each should be a single Ctrl+Z, not one per tab.
+class CompositeCommand {
+  constructor(commands, description) {
+    this.commands = commands.filter(Boolean);
+    this.description = description || `${this.commands.length} actions`;
+  }
+  execute() {
+    this.commands.forEach(cmd => cmd.execute());
+  }
+  undo() {
+    // Reverse order, so each command unwinds against the state it created.
+    [...this.commands].reverse().forEach(cmd => cmd.undo());
+  }
+}
+
 class DeleteLayerCommand {
   constructor(layerManager, layerId) {
     this.layerManager = layerManager;

@@ -5,6 +5,8 @@ SalesMap is a browser-based sales territory mapping application built with Googl
 ## Features
 
 - Import CSV / Excel data as map layers, keeping any custom columns as feature properties
+- Multi-tab workbooks: choose which tabs to import (one layer each); tabs sharing the same
+  columns are mapped once, and the whole import is a single undo step
 - Geocode address-based datasets
 - Draw points and polygons directly on the map
 - Layer visibility, color, opacity, and grouping controls
