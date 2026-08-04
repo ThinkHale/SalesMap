@@ -36,6 +36,8 @@ jobs:
           mkdir -p _site
           cp index.html share.html sw.js .nojekyll _site/
           cp -R css js plugins _site/
+          # Custom domain must ship in the artifact, or each deploy clears it
+          echo map.ebtools.pro > _site/CNAME
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
