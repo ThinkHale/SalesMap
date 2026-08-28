@@ -354,6 +354,36 @@ function clusterStyleFor(cluster, layer) {
   return { color: (agg && agg.color) || byCount.color, size: byCount.size };
 }
 
+function isCoordPair(c) {
+  return Object.prototype.toString.call(c) === '[object Array]' &&
+    isFinite(c[0]) && isFinite(c[1]);
+}
+
+// Mirrors MapManager._geojsonToPoints / _geojsonToPaths: point geometries carry
+// a single coordinate pair, polygons carry rings, and the two are nested a level
+// apart. Anything else (LINESTRING, collections) is skipped.
+function pointCoordinates(parsed) {
+  if (!parsed) return [];
+  if (parsed.type === 'Point') {
+    return isCoordPair(parsed.coordinates)
+      ? [{ lat: parsed.coordinates[1], lng: parsed.coordinates[0] }]
+      : [];
+  }
+  if (parsed.type === 'MultiPoint') {
+    return (parsed.coordinates || []).filter(isCoordPair).map(function(c) {
+      return { lat: c[1], lng: c[0] };
+    });
+  }
+  return [];
+}
+
+function polygonCoordinates(parsed) {
+  if (!parsed || !parsed.coordinates) return [];
+  if (parsed.type === 'Polygon') return [parsed.coordinates];
+  if (parsed.type === 'MultiPolygon') return parsed.coordinates;
+  return [];
+}
+
 function makeClusterIcon(cluster, layer) {
   var count = cluster.getChildCount();
   var s = clusterStyleFor(cluster, layer);
@@ -393,34 +423,58 @@ LAYER_DATA.forEach(function(layer) {
       })
     : null;
 
+  // Shared by latitude/longitude features and by WKT point geometries.
+  function addMarker(feature, lat, lng) {
+    if (!renderPins) return;
+    var color = featureColor(layer, feature);
+    var marker = L.marker([lat, lng], {
+      icon: makeIcon(color, layerScale),
+      title: feature.name || ''
+    }).bindPopup(makePopupContent(feature, layer));
+    // Clusters need their members' data to compute an aggregate color.
+    marker._feature = feature;
+    if (clusterGroup) {
+      clusterGroup.addLayer(marker);
+    } else {
+      marker.addTo(map);
+    }
+  }
+
+  function addPolygons(feature, polygons) {
+    var fillColor = featureColor(layer, feature);
+    polygons.forEach(function(polyCoords) {
+      // Leaflet reads [outerRing, ...holes], each as [[lat, lng], …].
+      var rings = polyCoords.map(function(ring) {
+        return ring.map(function(c) { return [c[1], c[0]]; });
+      });
+      L.polygon(rings, {
+        fillColor: fillColor,
+        fillOpacity: 0.35,
+        color: fillColor,
+        weight: 2
+      }).bindPopup(makePopupContent(feature, layer)).addTo(map);
+    });
+  }
+
   (layer.features || []).forEach(function(feature) {
-    if (feature.wkt) {
+    if (feature.wkt && String(feature.wkt).trim()) {
+      var parsed;
       try {
-        var parsed = wellknown ? wellknown.parse(feature.wkt) : null;
-        if (parsed && parsed.coordinates) {
-          var latlngs = parsed.coordinates[0].map(function(c) { return [c[1], c[0]]; });
-          var fillColor = featureColor(layer, feature);
-          L.polygon(latlngs, {
-            fillColor: fillColor,
-            fillOpacity: 0.35,
-            color: fillColor,
-            weight: 2
-          }).bindPopup(makePopupContent(feature, layer)).addTo(map);
-        }
-      } catch(e) {}
-    } else if (renderPins && feature.latitude && feature.longitude) {
-      var color = featureColor(layer, feature);
-      var marker = L.marker(
-        [parseFloat(feature.latitude), parseFloat(feature.longitude)],
-        { icon: makeIcon(color, layerScale), title: feature.name || '' }
-      ).bindPopup(makePopupContent(feature, layer));
-      // Clusters need their members' data to compute an aggregate color.
-      marker._feature = feature;
-      if (clusterGroup) {
-        clusterGroup.addLayer(marker);
-      } else {
-        marker.addTo(map);
+        parsed = typeof wellknown !== 'undefined' ? wellknown.parse(feature.wkt) : null;
+      } catch(e) { return; }
+      if (!parsed) return;
+
+      // A WKT column holds whatever geometry the source data had: points draw as
+      // pins, polygons as shapes, anything else is skipped.
+      var points = pointCoordinates(parsed);
+      if (points.length) {
+        points.forEach(function(c) { addMarker(feature, c.lat, c.lng); });
+        return;
       }
+      var polygons = polygonCoordinates(parsed);
+      if (polygons.length) addPolygons(feature, polygons);
+    } else if (feature.latitude && feature.longitude) {
+      addMarker(feature, parseFloat(feature.latitude), parseFloat(feature.longitude));
     }
   });
 

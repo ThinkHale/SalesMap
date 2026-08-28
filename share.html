@@ -96,7 +96,15 @@
   })();
 
   function tryRender() {
-    if (MAPS_READY && SNAPSHOT) renderMap(SNAPSHOT);
+    if (!MAPS_READY || !SNAPSHOT) return;
+    try {
+      renderMap(SNAPSHOT);
+    } catch (e) {
+      // A render failure is a bug in this page, not a connection problem — keep
+      // the real error in the console instead of swallowing it.
+      console.error('[share] Failed to render snapshot:', e);
+      showError('Something went wrong drawing this map. Please let the sender know.');
+    }
   }
 
   // ── Rendering helpers (mirror the live app's map-manager / cluster-manager) ──
@@ -411,32 +419,84 @@
       var layerScale = (layer.pinScale != null ? layer.pinScale : 1);
 
       (layer.features || []).forEach(function (feature) {
-        if (feature.wkt) { buildPolygons(view, feature); return; }
+        if (feature.wkt && String(feature.wkt).trim()) {
+          buildWktFeature(view, feature, layerScale);
+          return;
+        }
         var lat = parseFloat(feature.latitude), lng = parseFloat(feature.longitude);
         if (isNaN(lat) || isNaN(lng)) return;
-
-        var marker = new google.maps.Marker({
-          position: { lat: lat, lng: lng },
-          title: feature.name || '',
-          icon: makeMarkerIcon(featureColorFor(feature, layer), layerScale)
-        });
-        // Clusters need their members' data to compute an aggregate color.
-        marker._feature = feature;
-        marker.addListener('click', function () { openInfo(feature, layer, marker); });
-        view.markers.push(marker);
-        view.points.push(new google.maps.LatLng(lat, lng));
+        addMarker(view, feature, layerScale, lat, lng);
       });
 
       return view;
     });
 
-    function buildPolygons(view, feature) {
+    function isCoordPair(c) {
+      return Object.prototype.toString.call(c) === '[object Array]' &&
+        isFinite(c[0]) && isFinite(c[1]);
+    }
+
+    // Mirrors MapManager._geojsonToPoints / _geojsonToPaths: point geometries
+    // carry a single coordinate pair, polygons carry rings, and the two are
+    // nested a level apart. Anything else (LINESTRING, collections) is skipped.
+    function pointCoordinates(parsed) {
+      if (!parsed) return [];
+      if (parsed.type === 'Point') {
+        return isCoordPair(parsed.coordinates)
+          ? [{ lat: parsed.coordinates[1], lng: parsed.coordinates[0] }]
+          : [];
+      }
+      if (parsed.type === 'MultiPoint') {
+        return (parsed.coordinates || []).filter(isCoordPair).map(function (c) {
+          return { lat: c[1], lng: c[0] };
+        });
+      }
+      return [];
+    }
+
+    function polygonCoordinates(parsed) {
+      if (!parsed || !parsed.coordinates) return [];
+      if (parsed.type === 'Polygon') return [parsed.coordinates];
+      if (parsed.type === 'MultiPolygon') return parsed.coordinates;
+      return [];
+    }
+
+    // Shared by latitude/longitude features and by WKT point geometries.
+    function addMarker(view, feature, layerScale, lat, lng) {
+      var marker = new google.maps.Marker({
+        position: { lat: lat, lng: lng },
+        title: feature.name || '',
+        icon: makeMarkerIcon(featureColorFor(feature, view.layer), layerScale)
+      });
+      // Clusters need their members' data to compute an aggregate color.
+      marker._feature = feature;
+      marker.addListener('click', function () { openInfo(feature, view.layer, marker); });
+      view.markers.push(marker);
+      view.points.push(new google.maps.LatLng(lat, lng));
+    }
+
+    // Mirrors MapManager._addWktFeature: a WKT column holds whatever geometry the
+    // source data had, so points draw as pins and polygons as shapes.
+    function buildWktFeature(view, feature, layerScale) {
       var parsed;
-      try { parsed = wellknown ? wellknown.parse(feature.wkt) : null; } catch (e) { return; }
-      if (!parsed || !parsed.coordinates) return;
-      var rings = parsed.type === 'MultiPolygon' ? parsed.coordinates : [parsed.coordinates];
+      try {
+        parsed = typeof wellknown !== 'undefined' ? wellknown.parse(feature.wkt) : null;
+      } catch (e) { return; }
+      if (!parsed) return;
+
+      var points = pointCoordinates(parsed);
+      if (points.length) {
+        points.forEach(function (c) { addMarker(view, feature, layerScale, c.lat, c.lng); });
+        return;
+      }
+      buildPolygons(view, feature, parsed);
+    }
+
+    function buildPolygons(view, feature, parsed) {
+      var polygons = polygonCoordinates(parsed);
+      if (!polygons.length) return;
       var fillColor = featureColorFor(feature, view.layer);
-      rings.forEach(function (polyCoords) {
+      polygons.forEach(function (polyCoords) {
         var paths = polyCoords.map(function (ring) {
           return ring.map(function (c) { return { lat: c[1], lng: c[0] }; });
         });
@@ -773,16 +833,19 @@
   (async function init() {
     var id = new URLSearchParams(window.location.search).get('id');
     if (!id) { showError('No map ID provided in the URL.'); return; }
+    var data;
     try {
       await firebase.auth().signInAnonymously();
       var snap = await firebase.database().ref('salesTerritoryData/mapShares/' + id).once('value');
-      var data = snap.val();
-      if (!data) { showError('Map snapshot not found. The link may be invalid or expired.'); return; }
-      SNAPSHOT = data;
-      tryRender();
+      data = snap.val();
     } catch (e) {
+      console.error('[share] Failed to fetch snapshot:', e);
       showError('Failed to load map. Please check your connection and try again.');
+      return;
     }
+    if (!data) { showError('Map snapshot not found. The link may be invalid or expired.'); return; }
+    SNAPSHOT = data;
+    tryRender();
   })();
 })();
 </script>

@@ -122,7 +122,7 @@ class MapManager {
 
     features.forEach(feature => {
       if (feature.wkt && feature.wkt.trim()) {
-        this._addPolygonFeature(layerId, feature, color);
+        this._addWktFeature(layerId, feature, color);
       } else if (!isNaN(parseFloat(feature.latitude)) && !isNaN(parseFloat(feature.longitude))) {
         this._addPointFeature(layerId, feature, color);
       }
@@ -131,13 +131,18 @@ class MapManager {
     return color;
   }
 
-  _addPointFeature(layerId, feature, color) {
+  // `position` is supplied for features whose coordinates come from a WKT POINT
+  // rather than latitude/longitude columns; everything else reads the columns.
+  _addPointFeature(layerId, feature, color, position) {
     const layerData = this.layers.get(layerId);
     if (!layerData) return;
 
+    const pos = position ||
+      { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) };
+
     if (feature.isTextLabel) {
       const labelMarker = new google.maps.Marker({
-        position: { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) },
+        position: pos,
         map: layerData.visible ? this.map : null,
         title: feature.name || 'Map label',
         label: {
@@ -174,7 +179,7 @@ class MapManager {
     const finalPinScale = AppConfig.marker.scale * globalPinScale * layerPinScale;
 
     const marker = new google.maps.Marker({
-      position: { lat: parseFloat(feature.latitude), lng: parseFloat(feature.longitude) },
+      position: pos,
       map: useCluster ? null : (layerData.visible ? this.map : null),
       title: feature.name || '',
       icon: {
@@ -209,10 +214,9 @@ class MapManager {
     }
   }
 
-  _addPolygonFeature(layerId, feature, color) {
-    const layerData = this.layers.get(layerId);
-    if (!layerData) return;
-
+  // A WKT column holds whatever geometry the source data had. Points draw as
+  // pins, polygons as shapes; anything else (lines, collections) is skipped.
+  _addWktFeature(layerId, feature, color) {
     let geoJson;
     try {
       if (typeof wellknown !== 'undefined') {
@@ -224,6 +228,19 @@ class MapManager {
     }
 
     if (!geoJson) return;
+
+    const points = this._geojsonToPoints(geoJson);
+    if (points.length) {
+      points.forEach(position => this._addPointFeature(layerId, feature, color, position));
+      return;
+    }
+
+    this._addPolygonFeature(layerId, feature, color, geoJson);
+  }
+
+  _addPolygonFeature(layerId, feature, color, geoJson) {
+    const layerData = this.layers.get(layerId);
+    if (!layerData) return;
 
     const pathData = this._geojsonToPaths(geoJson);
     if (!pathData) return;
@@ -260,6 +277,25 @@ class MapManager {
 
       layerData.polygons.push(polygon);
     });
+  }
+
+  _isCoordPair(c) {
+    return Array.isArray(c) && isFinite(c[0]) && isFinite(c[1]);
+  }
+
+  _geojsonToPoints(geoJson) {
+    if (!geoJson) return [];
+    if (geoJson.type === 'Point') {
+      return this._isCoordPair(geoJson.coordinates)
+        ? [{ lat: geoJson.coordinates[1], lng: geoJson.coordinates[0] }]
+        : [];
+    }
+    if (geoJson.type === 'MultiPoint') {
+      return (geoJson.coordinates || [])
+        .filter(c => this._isCoordPair(c))
+        .map(c => ({ lat: c[1], lng: c[0] }));
+    }
+    return [];
   }
 
   _geojsonToPaths(geoJson) {
