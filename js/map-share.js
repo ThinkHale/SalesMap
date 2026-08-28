@@ -81,21 +81,6 @@ const MapShare = {
     return { url: shareUrl.toString(), snapshot };
   },
 
-  async copyToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text);
-    }
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
-    document.body.appendChild(ta);
-    ta.select();
-    let ok = false;
-    try { ok = document.execCommand('copy'); } catch { ok = false; }
-    document.body.removeChild(ta);
-    if (!ok) throw new Error('Copy was blocked');
-  },
-
   showShareDialog(url, snapshot) {
     document.getElementById('shareDialog')?.remove();
 
@@ -145,12 +130,7 @@ const MapShare = {
 
     document.getElementById('copyShareLink').addEventListener('click', async () => {
       const btn = document.getElementById('copyShareLink');
-      try {
-        await navigator.clipboard.writeText(url);
-      } catch {
-        document.getElementById('shareLinkInput').select();
-        document.execCommand('copy');
-      }
+      if (!await Clipboard.copyOrShow(url, 'Copy share link')) return;
       btn.textContent = 'Copied!';
       btn.style.background = '#107c10';
       setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = '#0078d4'; }, 2000);
@@ -165,13 +145,16 @@ const MapShare = {
           btn.textContent = text;
           setTimeout(() => { btn.textContent = label; }, 1800);
         };
+        let payload;
         try {
-          await this.copyToClipboard(build());
-          settle('Copied!');
+          payload = build();
         } catch (err) {
           console.error(`[MapShare] ${label} failed:`, err);
           settle('Failed');
+          return;
         }
+        // A blocked copy opens the manual overlay instead of claiming success.
+        if (await Clipboard.copyOrShow(payload, label)) settle('Copied!');
       });
     };
     // Guard the snapshot: an older caller may still pass only a URL.

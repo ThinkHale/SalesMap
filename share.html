@@ -70,6 +70,8 @@
 <script src="js/property-service.js"></script>
 <!-- SnapshotData renders the snapshot as text/GeoJSON for tools that can't run JS -->
 <script src="js/snapshot-data.js"></script>
+<!-- Clipboard: one copy path, with the manual fallback when the browser blocks it -->
+<script src="js/clipboard.js"></script>
 <script>
 (function () {
   'use strict';
@@ -664,26 +666,6 @@
       return cb;
     }
 
-    // execCommand is the fallback for browsers that refuse the async clipboard
-    // outside a trusted gesture chain; both paths are wrapped so a copy failure
-    // reports itself instead of looking like a dead button.
-    function copyText(text) {
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        return navigator.clipboard.writeText(text);
-      }
-      return new Promise(function (resolve, reject) {
-        var ta = document.createElement('textarea');
-        ta.value = text;
-        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
-        document.body.appendChild(ta);
-        ta.select();
-        var ok = false;
-        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
-        document.body.removeChild(ta);
-        ok ? resolve() : reject(new Error('Copy was blocked'));
-      });
-    }
-
     function makeCopyLink(text, title, build) {
       var b = makeLink(text, title, function () {
         var restore = function (label) {
@@ -698,9 +680,10 @@
           restore('Failed');
           return;
         }
-        copyText(payload).then(function () { restore('Copied!'); }, function (e) {
-          console.error('[share] Clipboard write failed:', e);
-          restore('Failed');
+        // A blocked copy opens the manual overlay instead, so the label only
+        // claims success when the text actually reached the clipboard.
+        Clipboard.copyOrShow(payload, 'Copy ' + text).then(function (copied) {
+          if (copied) restore('Copied!');
         });
       });
       return b;
