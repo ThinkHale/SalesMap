@@ -398,7 +398,7 @@ function setupDOMEventListeners() {
     btn.disabled = true;
     btn.textContent = '⏳ Sharing…';
     AppRegistry.require('mapShare').createShareLink()
-      .then(url => AppRegistry.require('mapShare').showShareDialog(url))
+      .then(({ url, snapshot }) => AppRegistry.require('mapShare').showShareDialog(url, snapshot))
       .catch(err => {
         console.error('Share failed', err);
         toastManager.error('Failed to create share link. Please try again.');

@@ -76,10 +76,27 @@ const MapShare = {
 
     const shareUrl = new URL('share.html', window.location.href);
     shareUrl.searchParams.set('id', id);
-    return shareUrl.toString();
+    // The snapshot comes back with the URL so the dialog can offer the same data
+    // as text, without a second read of every layer.
+    return { url: shareUrl.toString(), snapshot };
   },
 
-  showShareDialog(url) {
+  async copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text);
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+    document.body.appendChild(ta);
+    ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch { ok = false; }
+    document.body.removeChild(ta);
+    if (!ok) throw new Error('Copy was blocked');
+  },
+
+  showShareDialog(url, snapshot) {
     document.getElementById('shareDialog')?.remove();
 
     const overlay = document.createElement('div');
@@ -98,6 +115,23 @@ const MapShare = {
           style="padding:8px 14px;background:#0078d4;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap;flex-shrink:0;">
           Copy
         </button>
+      </div>
+      <div style="border-top:1px solid #eee;padding-top:16px;margin-bottom:20px;">
+        <h3 style="font-size:13px;font-weight:600;margin-bottom:4px;color:#111;">Copy the data itself</h3>
+        <p style="font-size:12px;color:#666;margin-bottom:10px;">
+          The link opens an interactive map, but reads as blank to anything that can't run it —
+          an AI assistant, a chat preview. Paste this text instead.
+        </p>
+        <div style="display:flex;gap:8px;">
+          <button id="copyShareSummary" data-label="Copy summary"
+            style="padding:7px 12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;">
+            Copy summary
+          </button>
+          <button id="copyShareGeoJSON" data-label="Copy GeoJSON"
+            style="padding:7px 12px;background:#f0f0f0;border:1px solid #ddd;border-radius:6px;font-size:12px;cursor:pointer;">
+            Copy GeoJSON
+          </button>
+        </div>
       </div>
       <div style="display:flex;justify-content:flex-end;">
         <button id="closeShareDialog"
@@ -121,6 +155,35 @@ const MapShare = {
       btn.style.background = '#107c10';
       setTimeout(() => { btn.textContent = 'Copy'; btn.style.background = '#0078d4'; }, 2000);
     });
+
+    const wireDataButton = (id, build) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        const label = btn.dataset.label;
+        const settle = text => {
+          btn.textContent = text;
+          setTimeout(() => { btn.textContent = label; }, 1800);
+        };
+        try {
+          await this.copyToClipboard(build());
+          settle('Copied!');
+        } catch (err) {
+          console.error(`[MapShare] ${label} failed:`, err);
+          settle('Failed');
+        }
+      });
+    };
+    // Guard the snapshot: an older caller may still pass only a URL.
+    if (snapshot && typeof SnapshotData !== 'undefined') {
+      wireDataButton('copyShareSummary', () => SnapshotData.toSummary(snapshot));
+      wireDataButton('copyShareGeoJSON', () => SnapshotData.toGeoJSONText(snapshot));
+    } else {
+      ['copyShareSummary', 'copyShareGeoJSON'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (btn) { btn.disabled = true; btn.style.opacity = '0.5'; btn.style.cursor = 'default'; }
+      });
+    }
 
     const close = () => overlay.remove();
     document.getElementById('closeShareDialog').addEventListener('click', close);

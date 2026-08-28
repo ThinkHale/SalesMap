@@ -1,6 +1,6 @@
 // sw.js — Service Worker for offline-first caching
 
-const CACHE_NAME = 'salesmap-v15';
+const CACHE_NAME = 'salesmap-v16';
 const STATIC_ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,7 @@ const STATIC_ASSETS = [
   './js/error-handler.js',
   './js/app-registry.js',
   './js/property-service.js',
+  './js/snapshot-data.js',
   './js/state-manager.js',
   './js/ui-components.js',
   './js/validation-service.js',

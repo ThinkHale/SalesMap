@@ -41,6 +41,7 @@
   .vp-group { display: flex; align-items: center; gap: 6px; padding: 1px 0; font-size: 11px; color: #605e5c; }
   .vp-group-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vp-note { padding: 8px 10px; border-top: 1px solid #edebe9; font-size: 10px; color: #a19f9d; }
+  .vp-hint { font-size: 10px; color: #a19f9d; line-height: 1.4; margin-top: 2px; }
   .iw-title { font-weight: 600; font-size: 14px; margin-bottom: 6px; color: #333; }
   .iw-row { font-size: 12px; margin-bottom: 3px; }
   .iw-label { font-weight: 500; color: #555; margin-right: 4px; text-transform: capitalize; }
@@ -67,6 +68,8 @@
 <script src="js/config.js"></script>
 <!-- PropertyService resolves property-based colors exactly as the live app does -->
 <script src="js/property-service.js"></script>
+<!-- SnapshotData renders the snapshot as text/GeoJSON for tools that can't run JS -->
+<script src="js/snapshot-data.js"></script>
 <script>
 (function () {
   'use strict';
@@ -661,6 +664,48 @@
       return cb;
     }
 
+    // execCommand is the fallback for browsers that refuse the async clipboard
+    // outside a trusted gesture chain; both paths are wrapped so a copy failure
+    // reports itself instead of looking like a dead button.
+    function copyText(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      return new Promise(function (resolve, reject) {
+        var ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+        document.body.removeChild(ta);
+        ok ? resolve() : reject(new Error('Copy was blocked'));
+      });
+    }
+
+    function makeCopyLink(text, title, build) {
+      var b = makeLink(text, title, function () {
+        var restore = function (label) {
+          b.textContent = label;
+          setTimeout(function () { b.textContent = text; }, 1800);
+        };
+        var payload;
+        try {
+          payload = build();
+        } catch (e) {
+          console.error('[share] Could not build ' + text + ':', e);
+          restore('Failed');
+          return;
+        }
+        copyText(payload).then(function () { restore('Copied!'); }, function (e) {
+          console.error('[share] Clipboard write failed:', e);
+          restore('Failed');
+        });
+      });
+      return b;
+    }
+
     function makeLink(text, title, onClick) {
       var b = document.createElement('button');
       b.type = 'button';
@@ -746,6 +791,32 @@
 
       layerViews.forEach(function (v) { layerSec.appendChild(buildLayerRow(v)); });
       bodyEl.appendChild(layerSec);
+
+      // This page is a map canvas fed from Firebase at runtime, so anything that
+      // can't run JavaScript — an AI assistant handed the link, a chat unfurler —
+      // sees an empty shell. Let the viewer copy the data itself instead.
+      var dataSec = document.createElement('div');
+      dataSec.className = 'vp-section';
+      var dataHead = document.createElement('div');
+      dataHead.className = 'vp-section-head';
+      var dataTitle = document.createElement('span');
+      dataTitle.textContent = 'Copy data';
+      var dataLinks = document.createElement('span');
+      dataLinks.className = 'vp-bulk';
+      dataLinks.appendChild(makeCopyLink(
+        'Summary', 'Copy a text summary to paste into ChatGPT or another assistant',
+        function () { return SnapshotData.toSummary(SNAPSHOT); }));
+      dataLinks.appendChild(makeCopyLink(
+        'GeoJSON', 'Copy GeoJSON for QGIS, ArcGIS, or another mapping tool',
+        function () { return SnapshotData.toGeoJSONText(SNAPSHOT); }));
+      dataHead.appendChild(dataTitle);
+      dataHead.appendChild(dataLinks);
+      dataSec.appendChild(dataHead);
+      var dataHint = document.createElement('div');
+      dataHint.className = 'vp-hint';
+      dataHint.textContent = 'Paste the copied text — this link on its own reads as blank to AI tools.';
+      dataSec.appendChild(dataHint);
+      bodyEl.appendChild(dataSec);
 
       var note = document.createElement('div');
       note.className = 'vp-note';
